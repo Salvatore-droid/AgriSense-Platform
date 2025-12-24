@@ -1,5 +1,11 @@
 import React from "react";
-import { View, StyleSheet, ScrollView, Pressable } from "react-native";
+import { 
+  View, 
+  StyleSheet, 
+  ScrollView, 
+  Pressable, 
+  Alert 
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useNavigation } from "@react-navigation/native";
@@ -11,6 +17,7 @@ import { ThemedView } from "@/components/ThemedView";
 import { KPICard } from "@/components/KPICard";
 import { HeaderTitle } from "@/components/HeaderTitle";
 import { useTheme } from "@/hooks/useTheme";
+import { useChat } from "@/contexts/ChatContext";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import { mockKPIs, mockFields, mockWeatherForecast } from "@/lib/mockData";
 import type { RootStackParamList } from "@/navigation/RootStackNavigator";
@@ -22,6 +29,7 @@ export default function DashboardScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const navigation = useNavigation<NavigationProp>();
   const { theme, isDark } = useTheme();
+  const { openChat } = useChat();
 
   const getWeatherIcon = (condition: string): keyof typeof Feather.glyphMap => {
     switch (condition) {
@@ -38,6 +46,28 @@ export default function DashboardScreen() {
 
   const activeAlerts = 2;
 
+  const handleAIChatPress = () => {
+    openChat();
+    navigation.navigate("Chat");
+  };
+
+  const handleQuickAction = (action: string) => {
+    switch (action) {
+      case "irrigation":
+        Alert.alert("Irrigation", "Opening irrigation controls...");
+        break;
+      case "soil":
+        Alert.alert("Soil Analysis", "Opening soil analysis...");
+        break;
+      case "weather":
+        Alert.alert("Weather", "Checking detailed weather forecast...");
+        break;
+      case "ai":
+        handleAIChatPress();
+        break;
+    }
+  };
+
   return (
     <ThemedView style={styles.container}>
       <ScrollView
@@ -51,30 +81,84 @@ export default function DashboardScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        {/* Header */}
         <View style={styles.header}>
           <HeaderTitle title="AgriSense" />
-          <Pressable
-            onPress={() => navigation.navigate("Notifications")}
-            style={[styles.notificationButton, { backgroundColor: theme.backgroundSecondary }]}
-          >
-            <Feather name="bell" size={20} color={theme.text} />
-            {activeAlerts > 0 ? (
-              <View
-                style={[
-                  styles.badge,
-                  { backgroundColor: isDark ? Colors.dark.critical : Colors.light.critical },
-                ]}
-              >
-                <ThemedText style={styles.badgeText}>{activeAlerts}</ThemedText>
-              </View>
-            ) : null}
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={() => navigation.navigate("Notifications")}
+              style={[styles.notificationButton, { backgroundColor: theme.backgroundSecondary }]}
+            >
+              <Feather name="bell" size={20} color={theme.text} />
+              {activeAlerts > 0 ? (
+                <View
+                  style={[
+                    styles.badge,
+                    { backgroundColor: isDark ? Colors.dark.critical : Colors.light.critical },
+                  ]}
+                >
+                  <ThemedText style={styles.badgeText}>{activeAlerts}</ThemedText>
+                </View>
+              ) : null}
+            </Pressable>
+            <Pressable
+              onPress={() => navigation.navigate("Profile")}
+              style={[styles.profileButton, { backgroundColor: theme.backgroundSecondary }]}
+            >
+              <Feather name="user" size={20} color={theme.text} />
+            </Pressable>
+          </View>
         </View>
 
-        <View style={styles.section}>
-          <ThemedText type="h3" style={styles.sectionTitle}>
-            Overview
+        {/* Welcome Message */}
+        <View style={styles.welcomeSection}>
+          <ThemedText type="h2" style={styles.welcomeTitle}>
+            Good morning, Farmer! 🌱
           </ThemedText>
+          <ThemedText style={[styles.welcomeSubtitle, { color: theme.textSecondary }]}>
+            Your fields are looking healthy today
+          </ThemedText>
+        </View>
+
+        {/* AI Assistant Quick Access */}
+        <Pressable
+          style={[
+            styles.aiAssistantCard,
+            { 
+              backgroundColor: isDark ? Colors.dark.primary : Colors.light.primary,
+              borderColor: isDark ? Colors.dark.primaryVariant : Colors.light.primaryVariant,
+            }
+          ]}
+          onPress={handleAIChatPress}
+        >
+          <View style={styles.aiAssistantContent}>
+            <View style={styles.aiAssistantIcon}>
+              <Feather name="cpu" size={24} color="#FFFFFF" />
+            </View>
+            <View style={styles.aiAssistantText}>
+              <ThemedText style={styles.aiAssistantTitle}>
+                AgriSense AI Assistant
+              </ThemedText>
+              <ThemedText style={styles.aiAssistantDescription}>
+                Ask questions about crops, weather, soil health, and more
+              </ThemedText>
+            </View>
+            <Feather name="chevron-right" size={20} color="#FFFFFF" />
+          </View>
+        </Pressable>
+
+        {/* Overview Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText type="h3" style={styles.sectionTitle}>
+              Overview
+            </ThemedText>
+            <Pressable onPress={() => navigation.navigate("DashboardDetails")}>
+              <ThemedText type="link" style={{ color: theme.link }}>
+                View All
+              </ThemedText>
+            </Pressable>
+          </View>
           <View style={styles.kpiGrid}>
             <KPICard
               title="Water Savings"
@@ -84,6 +168,7 @@ export default function DashboardScreen() {
               color={isDark ? Colors.dark.accent : Colors.light.accent}
               trend="up"
               trendValue="+5% this week"
+              onPress={() => handleQuickAction("irrigation")}
             />
             <KPICard
               title="Yield Improvement"
@@ -104,6 +189,7 @@ export default function DashboardScreen() {
               color={isDark ? Colors.dark.primary : Colors.light.primary}
               trend="neutral"
               trendValue="Stable"
+              onPress={() => handleQuickAction("soil")}
             />
             <KPICard
               title="Active Fields"
@@ -114,6 +200,55 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {/* Quick Actions */}
+        <View style={styles.section}>
+          <ThemedText type="h3" style={styles.sectionTitle}>
+            Quick Actions
+          </ThemedText>
+          <View style={styles.quickActionsGrid}>
+            <Pressable
+              style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
+              onPress={() => handleQuickAction("irrigation")}
+            >
+              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.accent : Colors.light.accent}15` }]}>
+                <Feather name="droplet" size={24} color={isDark ? Colors.dark.accent : Colors.light.accent} />
+              </View>
+              <ThemedText style={styles.quickActionText}>Irrigation</ThemedText>
+            </Pressable>
+
+            <Pressable
+              style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
+              onPress={() => handleQuickAction("soil")}
+            >
+              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.primary : Colors.light.primary}15` }]}>
+                <Feather name="thermometer" size={24} color={isDark ? Colors.dark.primary : Colors.light.primary} />
+              </View>
+              <ThemedText style={styles.quickActionText}>Soil Analysis</ThemedText>
+            </Pressable>
+
+            <Pressable
+              style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
+              onPress={() => handleQuickAction("weather")}
+            >
+              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.warning : Colors.light.warning}15` }]}>
+                <Feather name="cloud" size={24} color={isDark ? Colors.dark.warning : Colors.light.warning} />
+              </View>
+              <ThemedText style={styles.quickActionText}>Weather</ThemedText>
+            </Pressable>
+
+            <Pressable
+              style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
+              onPress={() => handleQuickAction("ai")}
+            >
+              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.success : Colors.light.success}15` }]}>
+                <Feather name="message-circle" size={24} color={isDark ? Colors.dark.success : Colors.light.success} />
+              </View>
+              <ThemedText style={styles.quickActionText}>AI Chat</ThemedText>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Impact Metrics */}
         <View style={styles.section}>
           <ThemedText type="h3" style={styles.sectionTitle}>
             Impact Metrics
@@ -170,10 +305,18 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {/* Weather Forecast */}
         <View style={styles.section}>
-          <ThemedText type="h3" style={styles.sectionTitle}>
-            7-Day Weather Forecast
-          </ThemedText>
+          <View style={styles.sectionHeader}>
+            <ThemedText type="h3" style={styles.sectionTitle}>
+              7-Day Weather Forecast
+            </ThemedText>
+            <Pressable onPress={() => handleQuickAction("weather")}>
+              <ThemedText type="link" style={{ color: theme.link }}>
+                Details
+              </ThemedText>
+            </Pressable>
+          </View>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -239,10 +382,18 @@ export default function DashboardScreen() {
           </ScrollView>
         </View>
 
+        {/* Field Summary */}
         <View style={styles.section}>
-          <ThemedText type="h3" style={styles.sectionTitle}>
-            Field Summary
-          </ThemedText>
+          <View style={styles.sectionHeader}>
+            <ThemedText type="h3" style={styles.sectionTitle}>
+              Field Summary
+            </ThemedText>
+            <Pressable onPress={() => navigation.navigate("Fields")}>
+              <ThemedText type="link" style={{ color: theme.link }}>
+                View All
+              </ThemedText>
+            </Pressable>
+          </View>
           <View
             style={[
               styles.summaryCard,
@@ -250,8 +401,9 @@ export default function DashboardScreen() {
             ]}
           >
             {mockFields.slice(0, 3).map((field, index) => (
-              <View
+              <Pressable
                 key={field.id}
+                onPress={() => navigation.navigate("FieldDetail", { fieldId: field.id })}
                 style={[
                   styles.summaryRow,
                   index < 2 && { borderBottomColor: theme.border, borderBottomWidth: 1 },
@@ -291,9 +443,53 @@ export default function DashboardScreen() {
                     color={isDark ? Colors.dark.accent : Colors.light.accent}
                   />
                   <ThemedText style={styles.summaryMoisture}>{field.moisture}%</ThemedText>
+                  <Feather name="chevron-right" size={16} color={theme.textSecondary} />
                 </View>
-              </View>
+              </Pressable>
             ))}
+          </View>
+        </View>
+
+        {/* Recent Alerts */}
+        <View style={styles.section}>
+          <ThemedText type="h3" style={styles.sectionTitle}>
+            Recent Alerts
+          </ThemedText>
+          <View
+            style={[
+              styles.alertsCard,
+              { backgroundColor: theme.cardBackground, borderColor: theme.border },
+            ]}
+          >
+            <View style={styles.alertItem}>
+              <View style={[styles.alertIcon, { backgroundColor: `${Colors.light.warning}15` }]}>
+                <Feather name="alert-triangle" size={16} color={Colors.light.warning} />
+              </View>
+              <View style={styles.alertContent}>
+                <ThemedText style={styles.alertTitle}>Low moisture detected</ThemedText>
+                <ThemedText style={[styles.alertSubtitle, { color: theme.textSecondary }]}>
+                  Field B - North Section
+                </ThemedText>
+              </View>
+              <ThemedText style={[styles.alertTime, { color: theme.textSecondary }]}>
+                2h ago
+              </ThemedText>
+            </View>
+            <View style={[styles.divider, { backgroundColor: theme.border, marginVertical: Spacing.md }]} />
+            <View style={styles.alertItem}>
+              <View style={[styles.alertIcon, { backgroundColor: `${Colors.light.success}15` }]}>
+                <Feather name="check-circle" size={16} color={Colors.light.success} />
+              </View>
+              <View style={styles.alertContent}>
+                <ThemedText style={styles.alertTitle}>Irrigation complete</ThemedText>
+                <ThemedText style={[styles.alertSubtitle, { color: theme.textSecondary }]}>
+                  Field C - Automated system
+                </ThemedText>
+              </View>
+              <ThemedText style={[styles.alertTime, { color: theme.textSecondary }]}>
+                5h ago
+              </ThemedText>
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -317,7 +513,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: Spacing.xl,
   },
+  headerActions: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+  },
   notificationButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  profileButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -339,16 +547,82 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
   },
+  welcomeSection: {
+    marginBottom: Spacing.xl,
+  },
+  welcomeTitle: {
+    marginBottom: Spacing.xs,
+  },
+  welcomeSubtitle: {
+    fontSize: 16,
+  },
+  aiAssistantCard: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.xl,
+    borderWidth: 1,
+  },
+  aiAssistantContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  aiAssistantIcon: {
+    marginRight: Spacing.md,
+  },
+  aiAssistantText: {
+    flex: 1,
+  },
+  aiAssistantTitle: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  aiAssistantDescription: {
+    color: "#FFFFFF",
+    opacity: 0.9,
+    fontSize: 13,
+  },
   section: {
     marginBottom: Spacing["2xl"],
   },
-  sectionTitle: {
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: Spacing.lg,
+  },
+  sectionTitle: {
+    // marginBottom is handled by sectionHeader
   },
   kpiGrid: {
     flexDirection: "row",
     gap: Spacing.md,
     marginBottom: Spacing.md,
+  },
+  quickActionsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Spacing.md,
+  },
+  quickActionButton: {
+    width: "48%",
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    alignItems: "center",
+  },
+  quickActionIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: Spacing.md,
+  },
+  quickActionText: {
+    fontSize: 14,
+    fontWeight: "500",
+    textAlign: "center",
   },
   impactCard: {
     borderRadius: BorderRadius.lg,
@@ -441,10 +715,41 @@ const styles = StyleSheet.create({
   summaryRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: Spacing.xs,
+    gap: Spacing.sm,
   },
   summaryMoisture: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  alertsCard: {
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    padding: Spacing.lg,
+  },
+  alertItem: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  alertIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: Spacing.md,
+  },
+  alertContent: {
+    flex: 1,
+  },
+  alertTitle: {
+    fontSize: 14,
+    fontWeight: "500",
+    marginBottom: 2,
+  },
+  alertSubtitle: {
+    fontSize: 12,
+  },
+  alertTime: {
+    fontSize: 12,
   },
 });

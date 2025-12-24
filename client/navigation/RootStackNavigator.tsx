@@ -1,11 +1,17 @@
+// Add to your existing RootStackNavigator.tsx
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import MainTabNavigator from "@/navigation/MainTabNavigator";
 import NotificationsScreen from "@/screens/NotificationsScreen";
 import FieldDetailScreen from "@/screens/FieldDetailScreen";
+import LoginScreen from "@/screens/auth/LoginScreen";
+import SignupScreen from "@/screens/auth/SignupScreen";
 import { useScreenOptions } from "@/hooks/useScreenOptions";
 
 export type RootStackParamList = {
+  Auth: undefined;
+  Login: undefined;
+  Signup: undefined;
   Main: undefined;
   Notifications: undefined;
   FieldDetail: { fieldId: string };
@@ -19,6 +25,25 @@ export default function RootStackNavigator() {
 
   return (
     <Stack.Navigator screenOptions={screenOptions}>
+      {/* Auth Screens */}
+      <Stack.Screen
+        name="Login"
+        component={LoginScreen}
+        options={{
+          ...opaqueScreenOptions,
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="Signup"
+        component={SignupScreen}
+        options={{
+          ...opaqueScreenOptions,
+          headerShown: false,
+        }}
+      />
+      
+      {/* Main App */}
       <Stack.Screen
         name="Main"
         component={MainTabNavigator}
