@@ -3,6 +3,8 @@
     "name": "AgriSense",
     "slug": "agrisense",
     "version": "1.0.0",
+    "sdkVersion": "54.0.0",
+    "entryPoint": "./client/index.js",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "agrisense",
@@ -23,7 +25,8 @@
     },
     "web": {
       "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "bundler": "metro"
     },
     "plugins": [
       [
