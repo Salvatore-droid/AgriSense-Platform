@@ -5,12 +5,14 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
-import { Alert, Platform } from 'react-native';
+import { Alert, Platform, View, Text } from 'react-native';
 
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { ChatProvider } from '@/contexts/ChatContext';
 import { NotificationsProvider, useNotifications } from '@/contexts/NotificationsContext';
 import { useTheme } from '@/hooks/useTheme';
+import { useResponsive } from '@/hooks/useResponsive';
+import ResponsiveTabBar from '@/components/ResponsiveTabBar';
 
 // Import screens
 import LoginScreen from './screens/auth/LoginScreen';
@@ -42,7 +44,7 @@ export type MainTabParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
-// Custom tab bar icon component with notification badge
+// Custom tab bar icon component with notification badge - Updated for web compatibility
 function TabBarIcon({ 
   name, 
   color, 
@@ -57,25 +59,36 @@ function TabBarIcon({
   badgeCount?: number;
 }) {
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ 
+      position: 'relative',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }}>
       <Feather name={name} size={size} color={color} />
       {showBadge && (
         <div style={{
           position: 'absolute',
-          top: -4,
-          right: -4,
+          top: -6,
+          right: -6,
           backgroundColor: Colors.light.critical,
-          borderRadius: 8,
-          minWidth: 16,
-          height: 16,
+          borderRadius: 9,
+          minWidth: 18,
+          height: 18,
+          display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          paddingHorizontal: 2,
+          padding: '0 4px',
+          borderWidth: 2,
+          borderStyle: 'solid',
+          borderColor: '#FFFFFF',
+          zIndex: 10,
         }}>
           <span style={{
             color: '#FFFFFF',
             fontSize: 10,
             fontWeight: 'bold',
+            lineHeight: 1,
           }}>
             {badgeCount && badgeCount > 99 ? '99+' : badgeCount}
           </span>
@@ -88,6 +101,7 @@ function TabBarIcon({
 function MainTabs() {
   const { theme } = useTheme();
   const { unreadCount } = useNotifications();
+  const { isDesktop, isWeb } = useResponsive();
 
   return (
     <Tab.Navigator
@@ -103,7 +117,7 @@ function MainTabs() {
             showBadge = unreadCount > 0;
             badgeCount = unreadCount;
           } else if (route.name === 'Chat') {
-            iconName = 'message-circle';
+            iconName = focused ? 'message-circle' : 'message-circle';
           } else if (route.name === 'Control') {
             iconName = 'sliders';
           } else if (route.name === 'Profile') {
@@ -128,20 +142,42 @@ function MainTabs() {
           height: Platform.OS === 'ios' ? 85 : 60,
           paddingBottom: Platform.OS === 'ios' ? 25 : 8,
           paddingTop: 8,
+          // Web-specific tab bar styles
+          ...(isWeb && {
+            maxWidth: isDesktop ? 1200 : '100%',
+            alignSelf: 'center',
+            marginHorizontal: 'auto',
+            width: '100%',
+            borderTopLeftRadius: isDesktop ? 12 : 0,
+            borderTopRightRadius: isDesktop ? 12 : 0,
+            borderLeftWidth: isDesktop ? 1 : 0,
+            borderRightWidth: isDesktop ? 1 : 0,
+            borderLeftColor: isDesktop ? '#E5E7EB' : 'transparent',
+            borderRightColor: isDesktop ? '#E5E7EB' : 'transparent',
+            boxShadow: isDesktop ? '0 -2px 10px rgba(0, 0, 0, 0.05)' : 'none',
+          }),
         },
         tabBarLabelStyle: {
           fontSize: 12,
           fontWeight: '500',
           marginTop: 2,
         },
+        tabBarItemStyle: {
+          // Better web compatibility
+          ...(isWeb && {
+            cursor: 'pointer',
+            WebkitTapHighlightColor: 'transparent',
+          }),
+        },
       })}
+      // Use our responsive tab bar component
+      tabBar={(props) => <ResponsiveTabBar {...props} />}
     >
       <Tab.Screen 
         name="Dashboard" 
         component={DashboardScreen}
         options={{ 
           tabBarLabel: 'Home',
-          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
         }}
       />
       <Tab.Screen 
@@ -165,6 +201,7 @@ function MainTabs() {
 
 function AppNavigator() {
   const { user, loading } = useAuth();
+  const { isWeb } = useResponsive();
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
@@ -193,7 +230,17 @@ function AppNavigator() {
           backgroundColor: '#F8F9FA',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center'
+          justifyContent: 'center',
+          // Enhanced web centering
+          ...(isWeb && {
+            minHeight: '100vh',
+            width: '100%',
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+          })
         }}>
           <div style={{
             width: 40,
@@ -207,7 +254,8 @@ function AppNavigator() {
           <div style={{
             color: '#6B7280',
             fontSize: 16,
-            fontWeight: 500
+            fontWeight: 500,
+            textAlign: 'center',
           }}>
             Loading AgriSense...
           </div>
@@ -228,19 +276,54 @@ function AppNavigator() {
         headerShown: false,
         contentStyle: {
           backgroundColor: '#F8F9FA'
-        }
+        },
+        // Web-specific navigation styles
+        ...(isWeb && {
+          animation: 'none', // Disable slide animation on web for better performance
+          gestureEnabled: false, // Disable swipe gestures on web
+        }),
       }}
     >
       {!user ? (
         // Auth screens
         <>
-          <Stack.Screen name="Login" component={LoginScreen} />
-          <Stack.Screen name="Signup" component={SignupScreen} />
+          <Stack.Screen 
+            name="Login" 
+            component={LoginScreen}
+            options={{
+              ...(isWeb && {
+                presentation: 'transparentModal', // Better for web modal-like appearance
+              }),
+            }}
+          />
+          <Stack.Screen 
+            name="Signup" 
+            component={SignupScreen}
+            options={{
+              ...(isWeb && {
+                presentation: 'transparentModal',
+              }),
+            }}
+          />
         </>
       ) : (
         // Main app with tabs
         <>
-          <Stack.Screen name="MainTabs" component={MainTabs} />
+          <Stack.Screen 
+            name="MainTabs" 
+            component={MainTabs}
+            options={{
+              ...(isWeb && {
+                headerShown: false,
+                contentStyle: {
+                  backgroundColor: '#F8F9FA',
+                  maxWidth: 1200,
+                  marginHorizontal: 'auto',
+                  width: '100%',
+                },
+              }),
+            }}
+          />
           <Stack.Screen 
             name="Notifications" 
             component={NotificationsScreen}
@@ -250,8 +333,27 @@ function AppNavigator() {
               headerBackTitle: 'Back',
               headerStyle: {
                 backgroundColor: '#FFFFFF',
+                // Web-specific header
+                ...(isWeb && {
+                  maxWidth: 1200,
+                  marginHorizontal: 'auto',
+                  borderBottomWidth: 1,
+                  borderBottomColor: '#E5E7EB',
+                }),
+              },
+              headerTitleStyle: {
+                fontSize: 18,
+                fontWeight: '600',
               },
               headerTintColor: '#1A1A1A',
+              // Web-specific content style
+              ...(isWeb && {
+                contentStyle: {
+                  backgroundColor: '#F8F9FA',
+                  maxWidth: 1200,
+                  marginHorizontal: 'auto',
+                },
+              }),
             }}
           />
           <Stack.Screen 
@@ -263,8 +365,25 @@ function AppNavigator() {
               headerBackTitle: 'Back',
               headerStyle: {
                 backgroundColor: '#FFFFFF',
+                ...(isWeb && {
+                  maxWidth: 1200,
+                  marginHorizontal: 'auto',
+                  borderBottomWidth: 1,
+                  borderBottomColor: '#E5E7EB',
+                }),
+              },
+              headerTitleStyle: {
+                fontSize: 18,
+                fontWeight: '600',
               },
               headerTintColor: '#1A1A1A',
+              ...(isWeb && {
+                contentStyle: {
+                  backgroundColor: '#F8F9FA',
+                  maxWidth: 1200,
+                  marginHorizontal: 'auto',
+                },
+              }),
             }}
           />
         </>
@@ -273,14 +392,29 @@ function AppNavigator() {
   );
 }
 
+// Main App component with responsive container
 export default function App() {
+  const { isWeb } = useResponsive();
+  
   return (
     <SafeAreaProvider>
       <AuthProvider>
         <ChatProvider>
           <NotificationsProvider>
             <NavigationContainer>
-              <AppNavigator />
+              {/* Optional: Add a global responsive wrapper */}
+              {isWeb && (
+                <div style={{
+                  width: '100%',
+                  minHeight: '100vh',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  backgroundColor: '#F8F9FA',
+                }}>
+                  <AppNavigator />
+                </div>
+              )}
+              {!isWeb && <AppNavigator />}
               <StatusBar style="auto" />
             </NavigationContainer>
           </NotificationsProvider>
