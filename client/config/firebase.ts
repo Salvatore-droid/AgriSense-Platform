@@ -64,12 +64,12 @@ try {
   
   // Fallback configuration (for development/testing)
   const fallbackConfig = {
-    apiKey: "AIzaSyD6NPnDw7xruqaVnAKvxYxmX3HIgWCPjTk",
-    authDomain: "agrisense-11849.firebaseapp.com",
-    projectId: "agrisense-11849",
-    storageBucket: "agrisense-11849.firebasestorage.app",
-    messagingSenderId: "137280528526",
-    appId: "1:137280528526:android:50dd6ac7647a51a5f2e9df",
+    apiKey: "AIzaSyAETa9y1zBLsNi-DR7zwOrWBMiG-mDTOdU",
+    authDomain: "agrisense-f4c16.firebaseapp.com",
+    projectId: "agrisense-f4c16",
+    storageBucket: "agrisense-f4c16.firebasestorage.app",
+    messagingSenderId: "655954688754",
+    appId: "1:655954688754:android:15f6bb92146da40a1b6e6b",
   };
   
   try {
