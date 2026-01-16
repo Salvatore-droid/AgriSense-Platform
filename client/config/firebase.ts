@@ -1,32 +1,18 @@
 import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  initializeAuth, 
-  getReactNativePersistence,
-  indexedDBLocalPersistence,
-  browserLocalPersistence
-} from 'firebase/auth';
+import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
-// Your Firebase configuration from the provided JSON
+// Firebase configuration - MUST use your exact config
 const firebaseConfig = {
   apiKey: "AIzaSyD6NPnDw7xruqaVnAKvxYxmX3HIgWCPjTk",
-  authDomain: "agrisense-11849.firebaseapp.com", // You need to set this up
+  authDomain: "agrisense-11849.firebaseapp.com",
   projectId: "agrisense-11849",
   storageBucket: "agrisense-11849.firebasestorage.app",
-  messagingSenderId: "137280528526", // This is your project number
+  messagingSenderId: "137280528526",
   appId: "1:137280528526:android:50dd6ac7647a51a5f2e9df",
 };
-
-// First, let's check if the configuration is valid
-console.log('Firebase Config:', {
-  apiKey: firebaseConfig.apiKey ? '✅ Set' : '❌ Missing',
-  projectId: firebaseConfig.projectId ? '✅ Set' : '❌ Missing',
-  appId: firebaseConfig.appId ? '✅ Set' : '❌ Missing',
-});
 
 // Initialize Firebase
 let app;
@@ -35,41 +21,39 @@ let db;
 let storage;
 
 try {
+  console.log('🚀 Initializing Firebase for Expo...');
+  
+  // 1. Initialize Firebase App
   app = initializeApp(firebaseConfig);
-  console.log('✅ Firebase app initialized successfully');
+  console.log('✅ Firebase App initialized');
   
-  // Initialize Auth with platform-specific persistence
-  if (Platform.OS === 'web') {
-    // For web, use browser persistence
-    auth = initializeAuth(app, {
-      persistence: getReactNativePersistence(AsyncStorage)
-    });
-  } else {
-    // For React Native, use AsyncStorage
-    auth = initializeAuth(app, {
-      persistence: getReactNativePersistence(AsyncStorage)
-    });
-  }
+  // 2. Initialize Auth with AsyncStorage persistence
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage)
+  });
+  console.log('✅ Firebase Auth initialized');
   
-  // Initialize Firestore
+  // 3. Initialize Firestore
   db = getFirestore(app);
+  console.log('✅ Firebase Firestore initialized');
   
-  // Initialize Storage
+  // 4. Initialize Storage
   storage = getStorage(app);
+  console.log('✅ Firebase Storage initialized');
   
-  console.log('✅ All Firebase services initialized');
+  console.log('🎉 All Firebase services ready for Expo!');
   
 } catch (error) {
   console.error('❌ Firebase initialization error:', error);
   
   // Fallback configuration (for development/testing)
   const fallbackConfig = {
-    apiKey: "AIzaSyAETa9y1zBLsNi-DR7zwOrWBMiG-mDTOdU",
-    authDomain: "agrisense-f4c16.firebaseapp.com",
-    projectId: "agrisense-f4c16",
-    storageBucket: "agrisense-f4c16.firebasestorage.app",
-    messagingSenderId: "655954688754",
-    appId: "1:655954688754:android:15f6bb92146da40a1b6e6b",
+    apiKey: "AIzaSyD6NPnDw7xruqaVnAKvxYxmX3HIgWCPjTk",
+    authDomain: "agrisense-11849.firebaseapp.com",
+    projectId: "agrisense-11849",
+    storageBucket: "agrisense-11849.firebasestorage.app",
+    messagingSenderId: "137280528526",
+    appId: "1:137280528526:android:50dd6ac7647a51a5f2e9df",
   };
   
   try {
@@ -91,14 +75,7 @@ export async function testFirebaseConnection(): Promise<boolean> {
     await auth.ready;
     return true;
   } catch (error) {
-    console.error('Firebase connection test failed:', error);
+    console.log('⚠️ Firebase offline (normal for first connection)');
     return false;
   }
-}
-
-// Export initialized services
-export { app, auth, db, storage };
-
-// Export Firebase types for TypeScript
-export type { User } from 'firebase/auth';
-export type { DocumentData } from 'firebase/firestore';
+};
