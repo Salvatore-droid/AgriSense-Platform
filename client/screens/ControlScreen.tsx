@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { useNavigation } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { Platform } from "react-native";
@@ -38,6 +39,7 @@ const IRRIGATION_SETTINGS_KEY = '@agrisense_irrigation_settings';
 export default function ControlScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
+  const navigation = useNavigation();
   const { theme, isDark } = useTheme();
 
   const [selectedField, setSelectedField] = useState(mockFields[0]);
@@ -49,6 +51,10 @@ export default function ControlScreen() {
   const [customTime, setCustomTime] = useState("06:00");
   const [isLoading, setIsLoading] = useState(true);
   const [nextIrrigationTime, setNextIrrigationTime] = useState("2h 15m");
+  const [showAddFarmModal, setShowAddFarmModal] = useState(false);
+  const [showQuickAddModal, setShowQuickAddModal] = useState(false);
+  const [quickFarmName, setQuickFarmName] = useState("");
+  const [quickAddError, setQuickAddError] = useState("");
 
   // Load saved settings
   useEffect(() => {
@@ -228,6 +234,56 @@ export default function ControlScreen() {
     }
   };
 
+  const handleAddFarm = () => {
+    triggerHaptic('impact');
+    setShowAddFarmModal(false);
+    navigation.navigate('AddFarm' as never);
+  };
+
+  const handleQuickAddFarm = () => {
+    setQuickFarmName("");
+    setQuickAddError("");
+    setShowAddFarmModal(false);
+    setTimeout(() => setShowQuickAddModal(true), 100);
+  };
+
+  const handleSubmitQuickAdd = () => {
+    if (!quickFarmName.trim()) {
+      setQuickAddError("Farm name is required");
+      return;
+    }
+
+    // Here you would call your actual FarmContext addFarm function
+    // For now, we'll simulate the addition
+    Alert.alert(
+      "✅ Farm Added",
+      `Farm "${quickFarmName}" has been added successfully.`,
+      [
+        {
+          text: "View Farms",
+          onPress: () => {
+            setShowQuickAddModal(false);
+            navigation.navigate('Farms' as never);
+          }
+        },
+        {
+          text: "Add Details",
+          onPress: () => {
+            setShowQuickAddModal(false);
+            navigation.navigate('AddFarm' as never);
+          }
+        },
+        {
+          text: "OK",
+          onPress: () => {
+            setShowQuickAddModal(false);
+            // Refresh fields or update state
+          }
+        }
+      ]
+    );
+  };
+
   const TimeButton = ({ time, selected }: { time: string; selected: boolean }) => (
     <Pressable
       onPress={() => {
@@ -293,6 +349,168 @@ export default function ControlScreen() {
     );
   };
 
+  // Add Farm Modal Component
+  const AddFarmModal = () => (
+    <Modal
+      visible={showAddFarmModal}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setShowAddFarmModal(false)}
+    >
+      <Pressable 
+        style={styles.modalOverlay}
+        onPress={() => setShowAddFarmModal(false)}
+      >
+        <Pressable 
+          style={[
+            styles.modalContent,
+            { backgroundColor: theme.cardBackground }
+          ]}
+          onPress={(e) => e.stopPropagation()}
+        >
+          <View style={styles.modalHeader}>
+            <ThemedText type="h4">Add New Farm</ThemedText>
+            <Pressable onPress={() => setShowAddFarmModal(false)}>
+              <Feather name="x" size={24} color={theme.text} />
+            </Pressable>
+          </View>
+          
+          <ThemedText style={[styles.modalDescription, { color: theme.textSecondary }]}>
+            Choose how you want to add a farm
+          </ThemedText>
+          
+          <View style={styles.modalOptions}>
+            <Pressable
+              onPress={handleQuickAddFarm}
+              style={[
+                styles.modalOption,
+                { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }
+              ]}
+            >
+              <View style={styles.optionIconContainer}>
+                <Feather name="plus-circle" size={24} color={theme.primary} />
+              </View>
+              <View style={styles.optionContent}>
+                <ThemedText style={styles.optionTitle}>Quick Add</ThemedText>
+                <ThemedText style={[styles.optionDescription, { color: theme.textSecondary }]}>
+                  Add a farm with just a name for now
+                </ThemedText>
+              </View>
+              <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+            </Pressable>
+            
+            <Pressable
+              onPress={handleAddFarm}
+              style={[
+                styles.modalOption,
+                { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }
+              ]}
+            >
+              <View style={styles.optionIconContainer}>
+                <Feather name="edit" size={24} color={theme.primary} />
+              </View>
+              <View style={styles.optionContent}>
+                <ThemedText style={styles.optionTitle}>Full Details</ThemedText>
+                <ThemedText style={[styles.optionDescription, { color: theme.textSecondary }]}>
+                  Add all farm details including location, crops, etc.
+                </ThemedText>
+              </View>
+              <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+            </Pressable>
+          </View>
+          
+          <View style={styles.modalButtons}>
+            <Button
+              onPress={() => setShowAddFarmModal(false)}
+              variant="outline"
+              style={styles.modalButton}
+            >
+              Cancel
+            </Button>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+
+  // Quick Add Modal Component
+  const QuickAddModal = () => (
+    <Modal
+      visible={showQuickAddModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowQuickAddModal(false)}
+    >
+      <Pressable 
+        style={styles.modalOverlay}
+        onPress={() => setShowQuickAddModal(false)}
+      >
+        <Pressable 
+          style={[
+            styles.modalContent,
+            { backgroundColor: theme.cardBackground }
+          ]}
+          onPress={(e) => e.stopPropagation()}
+        >
+          <View style={styles.modalHeader}>
+            <ThemedText type="h4">Quick Add Farm</ThemedText>
+            <Pressable onPress={() => setShowQuickAddModal(false)}>
+              <Feather name="x" size={24} color={theme.text} />
+            </Pressable>
+          </View>
+          
+          <ThemedText style={[styles.modalDescription, { color: theme.textSecondary }]}>
+            Enter a name for your new farm
+          </ThemedText>
+          
+          <TextInput
+            style={[
+              styles.quickAddInput,
+              {
+                backgroundColor: theme.backgroundSecondary,
+                color: theme.text,
+                borderColor: quickAddError ? theme.critical : theme.border,
+              }
+            ]}
+            value={quickFarmName}
+            onChangeText={(text) => {
+              setQuickFarmName(text);
+              if (quickAddError) setQuickAddError("");
+            }}
+            placeholder="e.g., North Field, Main Farm, etc."
+            placeholderTextColor={theme.textSecondary}
+            autoFocus
+            onSubmitEditing={handleSubmitQuickAdd}
+          />
+          
+          {quickAddError && (
+            <ThemedText style={[styles.errorText, { color: theme.critical }]}>
+              {quickAddError}
+            </ThemedText>
+          )}
+          
+          <View style={styles.modalButtons}>
+            <Button
+              onPress={() => setShowQuickAddModal(false)}
+              variant="outline"
+              style={styles.modalButton}
+            >
+              Cancel
+            </Button>
+            <Button
+              onPress={handleSubmitQuickAdd}
+              variant="primary"
+              style={styles.modalButton}
+              disabled={!quickFarmName.trim()}
+            >
+              Add Farm
+            </Button>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+
   if (isLoading) {
     return (
       <ThemedView style={styles.loadingContainer}>
@@ -317,20 +535,31 @@ export default function ControlScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
+        {/* Header with Add Farm Button */}
         <View style={styles.header}>
           <ThemedText type="h2" style={styles.title}>
             Irrigation Control
           </ThemedText>
-          <Pressable
-            onPress={() => Alert.alert("Help", "Adjust irrigation settings for your fields.")}
-            style={styles.helpButton}
-          >
-            <Feather name="help-circle" size={20} color={theme.textSecondary} />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={() => setShowAddFarmModal(true)}
+              style={styles.addFarmButton}
+            >
+              <Feather name="plus" size={18} color={theme.primary} />
+              <ThemedText style={[styles.addFarmText, { color: theme.primary }]}>
+                Add Farm
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              onPress={() => Alert.alert("Help", "Adjust irrigation settings for your fields.")}
+              style={styles.helpButton}
+            >
+              <Feather name="help-circle" size={20} color={theme.textSecondary} />
+            </Pressable>
+          </View>
         </View>
 
-        {/* Field Selection Section */}
+        {/* Field Selection Section with No Fields State */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <ThemedText type="h4" style={styles.sectionTitle}>
@@ -340,89 +569,135 @@ export default function ControlScreen() {
               Choose field to control
             </ThemedText>
           </View>
-          <Pressable
-            onPress={() => {
-              setShowFieldPicker(!showFieldPicker);
-              triggerHaptic('impact');
-            }}
-            style={[
-              styles.fieldSelector,
-              { backgroundColor: theme.cardBackground, borderColor: theme.border },
-              Shadows.small,
-            ]}
-          >
-            <View style={styles.fieldInfo}>
-              <View style={styles.fieldHeader}>
-                <ThemedText style={styles.fieldName}>{selectedField.name}</ThemedText>
-                <FieldStatusIndicator status={selectedField.status} />
-              </View>
-              <View style={styles.fieldDetails}>
-                <View style={styles.fieldDetail}>
-                  <Feather name="map" size={12} color={theme.textSecondary} />
-                  <ThemedText style={[styles.fieldDetailText, { color: theme.textSecondary }]}>
-                    {selectedField.acres} acres
-                  </ThemedText>
-                </View>
-                <View style={styles.fieldDetail}>
-                  <Feather name="droplet" size={12} color={theme.textSecondary} />
-                  <ThemedText style={[styles.fieldDetailText, { color: theme.textSecondary }]}>
-                    {selectedField.moisture}% moisture
-                  </ThemedText>
-                </View>
-              </View>
-            </View>
-            <Feather
-              name={showFieldPicker ? "chevron-up" : "chevron-down"}
-              size={20}
-              color={theme.textSecondary}
-            />
-          </Pressable>
-
-          {showFieldPicker && (
-            <View
+          
+          {mockFields.length === 0 ? (
+            <Pressable
+              onPress={() => setShowAddFarmModal(true)}
               style={[
-                styles.fieldList,
+                styles.noFieldsCard,
                 { backgroundColor: theme.cardBackground, borderColor: theme.border },
                 Shadows.small,
               ]}
             >
-              {mockFields.map((field) => (
-                <Pressable
-                  key={field.id}
-                  onPress={() => {
-                    setSelectedField(field);
-                    setShowFieldPicker(false);
-                    triggerHaptic('impact');
-                  }}
-                  style={[
-                    styles.fieldOption,
-                    field.id === selectedField.id && styles.fieldOptionSelected,
-                  ]}
-                >
-                  <View style={styles.fieldOptionContent}>
-                    <FieldStatusIndicator status={field.status} />
-                    <View style={styles.fieldOptionInfo}>
-                      <ThemedText style={styles.fieldOptionName}>{field.name}</ThemedText>
-                      <ThemedText style={[styles.fieldOptionDetails, { color: theme.textSecondary }]}>
-                        {field.cropType} • {field.acres} acres
+              <View style={styles.noFieldsContent}>
+                <View style={[styles.noFieldsIcon, { backgroundColor: `${theme.primary}15` }]}>
+                  <Feather name="map" size={28} color={theme.primary} />
+                </View>
+                <View style={styles.noFieldsText}>
+                  <ThemedText style={styles.noFieldsTitle}>No Farms Added</ThemedText>
+                  <ThemedText style={[styles.noFieldsDescription, { color: theme.textSecondary }]}>
+                    Add your first farm to start controlling irrigation
+                  </ThemedText>
+                </View>
+                <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+              </View>
+            </Pressable>
+          ) : (
+            <>
+              <Pressable
+                onPress={() => {
+                  setShowFieldPicker(!showFieldPicker);
+                  triggerHaptic('impact');
+                }}
+                style={[
+                  styles.fieldSelector,
+                  { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                  Shadows.small,
+                ]}
+              >
+                <View style={styles.fieldInfo}>
+                  <View style={styles.fieldHeader}>
+                    <ThemedText style={styles.fieldName}>{selectedField.name}</ThemedText>
+                    <FieldStatusIndicator status={selectedField.status} />
+                  </View>
+                  <View style={styles.fieldDetails}>
+                    <View style={styles.fieldDetail}>
+                      <Feather name="map" size={12} color={theme.textSecondary} />
+                      <ThemedText style={[styles.fieldDetailText, { color: theme.textSecondary }]}>
+                        {selectedField.acres} acres
+                      </ThemedText>
+                    </View>
+                    <View style={styles.fieldDetail}>
+                      <Feather name="droplet" size={12} color={theme.textSecondary} />
+                      <ThemedText style={[styles.fieldDetailText, { color: theme.textSecondary }]}>
+                        {selectedField.moisture}% moisture
                       </ThemedText>
                     </View>
                   </View>
-                  <View style={styles.fieldOptionRight}>
-                    <ThemedText style={[styles.fieldMoisture, { color: theme.textSecondary }]}>
-                      {field.moisture}%
-                    </ThemedText>
-                    {field.id === selectedField.id && (
-                      <Feather
-                        name="check"
-                        size={18}
-                        color={theme.primary}
-                      />
-                    )}
-                  </View>
-                </Pressable>
-              ))}
-            </View>
+                </View>
+                <Feather
+                  name={showFieldPicker ? "chevron-up" : "chevron-down"}
+                  size={20}
+                  color={theme.textSecondary}
+                />
+              </Pressable>
+
+              {showFieldPicker && (
+                <View
+                  style={[
+                    styles.fieldList,
+                    { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                    Shadows.small,
+                  ]}
+                >
+                  {mockFields.map((field) => (
+                    <Pressable
+                      key={field.id}
+                      onPress={() => {
+                        setSelectedField(field);
+                        setShowFieldPicker(false);
+                        triggerHaptic('impact');
+                      }}
+                      style={[
+                        styles.fieldOption,
+                        field.id === selectedField.id && styles.fieldOptionSelected,
+                      ]}
+                    >
+                      <View style={styles.fieldOptionContent}>
+                        <FieldStatusIndicator status={field.status} />
+                        <View style={styles.fieldOptionInfo}>
+                          <ThemedText style={styles.fieldOptionName}>{field.name}</ThemedText>
+                          <ThemedText style={[styles.fieldOptionDetails, { color: theme.textSecondary }]}>
+                            {field.cropType} • {field.acres} acres
+                          </ThemedText>
+                        </View>
+                      </View>
+                      <View style={styles.fieldOptionRight}>
+                        <ThemedText style={[styles.fieldMoisture, { color: theme.textSecondary }]}>
+                          {field.moisture}%
+                        </ThemedText>
+                        {field.id === selectedField.id && (
+                          <Feather
+                            name="check"
+                            size={18}
+                            color={theme.primary}
+                          />
+                        )}
+                      </View>
+                    </Pressable>
+                  ))}
+                  
+                  {/* Add New Field Option */}
+                  <Pressable
+                    onPress={() => setShowAddFarmModal(true)}
+                    style={[
+                      styles.addNewFieldOption,
+                      { borderTopColor: theme.border }
+                    ]}
+                  >
+                    <View style={styles.addNewFieldContent}>
+                      <View style={[styles.addNewFieldIcon, { backgroundColor: `${theme.primary}15` }]}>
+                        <Feather name="plus" size={16} color={theme.primary} />
+                      </View>
+                      <ThemedText style={[styles.addNewFieldText, { color: theme.primary }]}>
+                        Add New Farm
+                      </ThemedText>
+                    </View>
+                    <Feather name="chevron-right" size={18} color={theme.textSecondary} />
+                  </Pressable>
+                </View>
+              )}
+            </>
           )}
         </View>
 
@@ -702,6 +977,12 @@ export default function ControlScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Add Farm Modal */}
+      <AddFarmModal />
+      
+      {/* Quick Add Modal */}
+      <QuickAddModal />
     </ThemedView>
   );
 }
@@ -738,8 +1019,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.xl,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
   title: {
     flex: 1,
+  },
+  addFarmButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  addFarmText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   helpButton: {
     padding: Spacing.sm,
@@ -757,6 +1056,35 @@ const styles = StyleSheet.create({
     // Style handled by ThemedText
   },
   sectionSubtitle: {
+    fontSize: 13,
+  },
+  noFieldsCard: {
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+  },
+  noFieldsContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  noFieldsIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noFieldsText: {
+    flex: 1,
+  },
+  noFieldsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  noFieldsDescription: {
     fontSize: 13,
   },
   fieldSelector: {
@@ -832,6 +1160,30 @@ const styles = StyleSheet.create({
   },
   fieldMoisture: {
     fontSize: 13,
+    fontWeight: '600',
+  },
+  addNewFieldOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Spacing.md,
+    borderTopWidth: 1,
+  },
+  addNewFieldContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    flex: 1,
+  },
+  addNewFieldIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: BorderRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addNewFieldText: {
+    fontSize: 14,
     fontWeight: '600',
   },
   statusDot: {
@@ -1064,6 +1416,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.lg,
   },
+  modalDescription: {
+    fontSize: 14,
+    marginBottom: Spacing.lg,
+  },
+  modalOptions: {
+    gap: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
+  modalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    gap: Spacing.md,
+  },
+  optionIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  optionContent: {
+    flex: 1,
+  },
+  optionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  optionDescription: {
+    fontSize: 12,
+  },
   timeInput: {
     borderWidth: 1,
     borderRadius: BorderRadius.md,
@@ -1071,6 +1458,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginBottom: Spacing.lg,
+  },
+  quickAddInput: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    fontSize: 16,
+    marginBottom: Spacing.sm,
+  },
+  errorText: {
+    fontSize: 12,
+    marginBottom: Spacing.md,
+    marginLeft: Spacing.xs,
   },
   modalButtons: {
     flexDirection: 'row',

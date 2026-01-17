@@ -23,7 +23,10 @@ import ControlScreen from './screens/ControlScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import FarmsScreen from './screens/FarmsScreen';
+import AddFarmScreen from './screens/AddFarmScreen';
 import { Colors } from '@/constants/theme';
+import { FarmProvider } from './contexts/FarmContext';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -391,6 +394,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
+      <FarmProvider> {/* Add this */}
         <ChatProvider>
           <NotificationsProvider>
             <NavigationContainer>
@@ -410,6 +414,7 @@ export default function App() {
             </NavigationContainer>
           </NotificationsProvider>
         </ChatProvider>
+        </FarmProvider> {/* Add this */}
       </AuthProvider>
     </SafeAreaProvider>
   );
