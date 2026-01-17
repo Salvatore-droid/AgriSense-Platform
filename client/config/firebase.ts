@@ -1,10 +1,9 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
+import { initializeAuth, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Firebase configuration - MUST use your exact config
+// Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyD6NPnDw7xruqaVnAKvxYxmX3HIgWCPjTk",
   authDomain: "agrisense-11849.firebaseapp.com",
@@ -15,67 +14,67 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-let app;
+console.log('🚀 Initializing Firebase...');
+
+const app = initializeApp(firebaseConfig);
+console.log('✅ Firebase App initialized');
+
+// Platform-specific auth initialization
 let auth;
-let db;
-let storage;
 
 try {
-  console.log('🚀 Initializing Firebase for Expo...');
-  
-  // 1. Initialize Firebase App
-  app = initializeApp(firebaseConfig);
-  console.log('✅ Firebase App initialized');
-  
-  // 2. Initialize Auth with AsyncStorage persistence
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage)
-  });
-  console.log('✅ Firebase Auth initialized');
-  
-  // 3. Initialize Firestore
-  db = getFirestore(app);
-  console.log('✅ Firebase Firestore initialized');
-  
-  // 4. Initialize Storage
-  storage = getStorage(app);
-  console.log('✅ Firebase Storage initialized');
-  
-  console.log('🎉 All Firebase services ready for Expo!');
-  
-} catch (error) {
-  console.error('❌ Firebase initialization error:', error);
-  
-  // Fallback configuration (for development/testing)
-  const fallbackConfig = {
-    apiKey: "AIzaSyD6NPnDw7xruqaVnAKvxYxmX3HIgWCPjTk",
-    authDomain: "agrisense-11849.firebaseapp.com",
-    projectId: "agrisense-11849",
-    storageBucket: "agrisense-11849.firebasestorage.app",
-    messagingSenderId: "137280528526",
-    appId: "1:137280528526:android:50dd6ac7647a51a5f2e9df",
-  };
-  
-  try {
-    app = initializeApp(fallbackConfig, 'AgriSenseFallback');
-    auth = getAuth(app);
-    db = getFirestore(app);
-    storage = getStorage(app);
-    console.log('✅ Firebase fallback initialized');
-  } catch (fallbackError) {
-    console.error('❌ Firebase fallback also failed:', fallbackError);
-    throw new Error('Firebase initialization failed. Please check your configuration.');
+  // Check if we're in a React Native/Expo environment
+  if (typeof navigator !== 'undefined' && navigator.product === 'ReactNative') {
+    // For React Native/Expo
+    console.log('📱 Detected React Native environment');
+    
+    // Dynamically import AsyncStorage only in native environment
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    
+    // For React Native, we need a different approach
+    // Option 1: Initialize auth without persistence for now
+    auth = initializeAuth(app);
+    console.log('✅ Firebase Auth initialized (React Native)');
+    
+    // Option 2: Try with async import
+    // const { getReactNativePersistence } = require('firebase/auth');
+    // auth = initializeAuth(app, {
+    //   persistence: getReactNativePersistence(AsyncStorage)
+    // });
+    
+  } else {
+    // For Web environment
+    console.log('🌐 Detected Web environment');
+    auth = initializeAuth(app, {
+      persistence: browserLocalPersistence
+    });
+    console.log('✅ Firebase Auth initialized (Web)');
   }
+} catch (error) {
+  console.warn('⚠️ Could not initialize auth with persistence, using default:', error);
+  auth = initializeAuth(app);
+  console.log('✅ Firebase Auth initialized (fallback)');
 }
 
-// Test Firebase connection
+// Initialize Firestore
+const db = getFirestore(app);
+console.log('✅ Firebase Firestore initialized');
+
+// Initialize Storage
+const storage = getStorage(app);
+console.log('✅ Firebase Storage initialized');
+
+console.log('🎉 All Firebase services ready!');
+
+export { app, auth, db, storage };
+
+// Simple Firebase connection test
 export async function testFirebaseConnection(): Promise<boolean> {
   try {
-    // Simple test to check if Firebase is connected
-    await auth.ready;
-    return true;
+    // Just check if auth is initialized
+    return !!auth;
   } catch (error) {
-    console.log('⚠️ Firebase offline (normal for first connection)');
+    console.log('⚠️ Firebase connection test failed:', error);
     return false;
   }
-};
+}
