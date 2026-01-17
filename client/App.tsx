@@ -44,7 +44,7 @@ export type MainTabParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
-// Custom tab bar icon component with notification badge - Updated for web compatibility
+// Custom tab bar icon component with notification badge
 function TabBarIcon({ 
   name, 
   color, 
@@ -142,7 +142,6 @@ function MainTabs() {
           height: Platform.OS === 'ios' ? 85 : 60,
           paddingBottom: Platform.OS === 'ios' ? 25 : 8,
           paddingTop: 8,
-          // Web-specific tab bar styles
           ...(isWeb && {
             maxWidth: isDesktop ? 1200 : '100%',
             alignSelf: 'center',
@@ -163,14 +162,12 @@ function MainTabs() {
           marginTop: 2,
         },
         tabBarItemStyle: {
-          // Better web compatibility
           ...(isWeb && {
             cursor: 'pointer',
             WebkitTapHighlightColor: 'transparent',
           }),
         },
       })}
-      // Use our responsive tab bar component
       tabBar={(props) => <ResponsiveTabBar {...props} />}
     >
       <Tab.Screen 
@@ -205,11 +202,9 @@ function AppNavigator() {
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
-    // Initialize app
     const init = async () => {
       try {
-        // Add any initialization logic here
-        await new Promise(resolve => setTimeout(resolve, 500)); // Simulate initialization
+        await new Promise(resolve => setTimeout(resolve, 500));
         setInitialized(true);
       } catch (error) {
         console.error('App initialization error:', error);
@@ -231,7 +226,6 @@ function AppNavigator() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          // Enhanced web centering
           ...(isWeb && {
             minHeight: '100vh',
             width: '100%',
@@ -272,15 +266,15 @@ function AppNavigator() {
 
   return (
     <Stack.Navigator 
+      key={user ? 'authenticated' : 'unauthenticated'} // ← THIS IS THE KEY FIX
       screenOptions={{ 
         headerShown: false,
         contentStyle: {
           backgroundColor: '#F8F9FA'
         },
-        // Web-specific navigation styles
         ...(isWeb && {
-          animation: 'none', // Disable slide animation on web for better performance
-          gestureEnabled: false, // Disable swipe gestures on web
+          animation: 'none',
+          gestureEnabled: false,
         }),
       }}
     >
@@ -292,7 +286,7 @@ function AppNavigator() {
             component={LoginScreen}
             options={{
               ...(isWeb && {
-                presentation: 'transparentModal', // Better for web modal-like appearance
+                presentation: 'transparentModal',
               }),
             }}
           />
@@ -333,7 +327,6 @@ function AppNavigator() {
               headerBackTitle: 'Back',
               headerStyle: {
                 backgroundColor: '#FFFFFF',
-                // Web-specific header
                 ...(isWeb && {
                   maxWidth: 1200,
                   marginHorizontal: 'auto',
@@ -346,7 +339,6 @@ function AppNavigator() {
                 fontWeight: '600',
               },
               headerTintColor: '#1A1A1A',
-              // Web-specific content style
               ...(isWeb && {
                 contentStyle: {
                   backgroundColor: '#F8F9FA',
@@ -392,7 +384,7 @@ function AppNavigator() {
   );
 }
 
-// Main App component with responsive container
+// Main App component
 export default function App() {
   const { isWeb } = useResponsive();
   
@@ -402,7 +394,6 @@ export default function App() {
         <ChatProvider>
           <NotificationsProvider>
             <NavigationContainer>
-              {/* Optional: Add a global responsive wrapper */}
               {isWeb && (
                 <div style={{
                   width: '100%',
