@@ -55,6 +55,7 @@ export default function ControlScreen() {
   const [showQuickAddModal, setShowQuickAddModal] = useState(false);
   const [quickFarmName, setQuickFarmName] = useState("");
   const [quickAddError, setQuickAddError] = useState("");
+  const [fields, setFields] = useState(mockFields);
 
   // Load saved settings
   useEffect(() => {
@@ -77,7 +78,7 @@ export default function ControlScreen() {
         setScheduleTime(settings.scheduleTime);
         setDuration(settings.duration);
         
-        const field = mockFields.find(f => f.id === settings.selectedFieldId);
+        const field = fields.find(f => f.id === settings.selectedFieldId);
         if (field) {
           setSelectedField(field);
         }
@@ -247,41 +248,76 @@ export default function ControlScreen() {
     setTimeout(() => setShowQuickAddModal(true), 100);
   };
 
-  const handleSubmitQuickAdd = () => {
+  const handleSubmitQuickAdd = async () => {
     if (!quickFarmName.trim()) {
       setQuickAddError("Farm name is required");
       return;
     }
 
-    // Here you would call your actual FarmContext addFarm function
-    // For now, we'll simulate the addition
-    Alert.alert(
-      "✅ Farm Added",
-      `Farm "${quickFarmName}" has been added successfully.`,
-      [
-        {
-          text: "View Farms",
-          onPress: () => {
-            setShowQuickAddModal(false);
-            navigation.navigate('Farms' as never);
+    try {
+      setIsLoading(true);
+      
+      // Simulate API delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Create a new farm object
+      const newField = {
+        id: `field-${Date.now()}`,
+        name: quickFarmName.trim(),
+        location: "Location to be added",
+        acres: 0,
+        cropType: "To be specified",
+        moisture: 0,
+        ph: 0,
+        temperature: 0,
+        nitrogen: 0,
+        phosphorus: 0,
+        potassium: 0,
+        status: "healthy" as const,
+      };
+      
+      // Add the new field to our fields list
+      const updatedFields = [...fields, newField];
+      setFields(updatedFields);
+      
+      // Update the selected field to the new one
+      setSelectedField(newField);
+      
+      triggerHaptic('success');
+      
+      // Close the modal
+      setShowQuickAddModal(false);
+      
+      Alert.alert(
+        "✅ Farm Added Successfully",
+        `Farm "${quickFarmName}" has been added.\n\nPlease go to the Farms screen to add more details.`,
+        [
+          {
+            text: "View Farms",
+            onPress: () => navigation.navigate('Farms' as never)
+          },
+          {
+            text: "Add Details",
+            onPress: () => navigation.navigate('AddFarm' as never)
+          },
+          {
+            text: "OK",
+            style: "default",
+            onPress: () => {
+              // Reset form
+              setQuickFarmName("");
+              setQuickAddError("");
+            }
           }
-        },
-        {
-          text: "Add Details",
-          onPress: () => {
-            setShowQuickAddModal(false);
-            navigation.navigate('AddFarm' as never);
-          }
-        },
-        {
-          text: "OK",
-          onPress: () => {
-            setShowQuickAddModal(false);
-            // Refresh fields or update state
-          }
-        }
-      ]
-    );
+        ]
+      );
+      
+    } catch (error) {
+      console.error("Error adding farm:", error);
+      Alert.alert("❌ Error", "Failed to add farm. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const TimeButton = ({ time, selected }: { time: string; selected: boolean }) => (
@@ -439,11 +475,19 @@ export default function ControlScreen() {
       visible={showQuickAddModal}
       transparent
       animationType="fade"
-      onRequestClose={() => setShowQuickAddModal(false)}
+      onRequestClose={() => {
+        if (!isLoading) {
+          setShowQuickAddModal(false);
+        }
+      }}
     >
       <Pressable 
         style={styles.modalOverlay}
-        onPress={() => setShowQuickAddModal(false)}
+        onPress={() => {
+          if (!isLoading) {
+            setShowQuickAddModal(false);
+          }
+        }}
       >
         <Pressable 
           style={[
@@ -454,9 +498,11 @@ export default function ControlScreen() {
         >
           <View style={styles.modalHeader}>
             <ThemedText type="h4">Quick Add Farm</ThemedText>
-            <Pressable onPress={() => setShowQuickAddModal(false)}>
-              <Feather name="x" size={24} color={theme.text} />
-            </Pressable>
+            {!isLoading && (
+              <Pressable onPress={() => setShowQuickAddModal(false)}>
+                <Feather name="x" size={24} color={theme.text} />
+              </Pressable>
+            )}
           </View>
           
           <ThemedText style={[styles.modalDescription, { color: theme.textSecondary }]}>
@@ -481,6 +527,7 @@ export default function ControlScreen() {
             placeholderTextColor={theme.textSecondary}
             autoFocus
             onSubmitEditing={handleSubmitQuickAdd}
+            editable={!isLoading}
           />
           
           {quickAddError && (
@@ -491,9 +538,14 @@ export default function ControlScreen() {
           
           <View style={styles.modalButtons}>
             <Button
-              onPress={() => setShowQuickAddModal(false)}
+              onPress={() => {
+                if (!isLoading) {
+                  setShowQuickAddModal(false);
+                }
+              }}
               variant="outline"
               style={styles.modalButton}
+              disabled={isLoading}
             >
               Cancel
             </Button>
@@ -501,7 +553,8 @@ export default function ControlScreen() {
               onPress={handleSubmitQuickAdd}
               variant="primary"
               style={styles.modalButton}
-              disabled={!quickFarmName.trim()}
+              disabled={!quickFarmName.trim() || isLoading}
+              loading={isLoading}
             >
               Add Farm
             </Button>
@@ -511,7 +564,7 @@ export default function ControlScreen() {
     </Modal>
   );
 
-  if (isLoading) {
+  if (isLoading && !showQuickAddModal) {
     return (
       <ThemedView style={styles.loadingContainer}>
         <View style={[styles.loadingSpinner, { borderColor: theme.primary }]} />
@@ -570,7 +623,7 @@ export default function ControlScreen() {
             </ThemedText>
           </View>
           
-          {mockFields.length === 0 ? (
+          {fields.length === 0 ? (
             <Pressable
               onPress={() => setShowAddFarmModal(true)}
               style={[
@@ -640,7 +693,7 @@ export default function ControlScreen() {
                     Shadows.small,
                   ]}
                 >
-                  {mockFields.map((field) => (
+                  {fields.map((field) => (
                     <Pressable
                       key={field.id}
                       onPress={() => {
