@@ -19,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  initialized: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   signup: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -41,66 +42,96 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
-  // Load saved auth state on startup
+  // Initialize auth and load saved state
   useEffect(() => {
-    const loadAuthState = async () => {
+    const initializeAuth = async () => {
       try {
-        const savedAuthState = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
-        if (savedAuthState) {
-          const parsedState = JSON.parse(savedAuthState);
-          if (parsedState.user && parsedState.timestamp) {
-            // Check if saved state is less than 1 hour old
-            const oneHourAgo = Date.now() - (60 * 60 * 1000);
-            if (parsedState.timestamp > oneHourAgo) {
-              // Create a minimal user object for faster load
-              const minimalUser = {
-                uid: parsedState.user.uid,
-                email: parsedState.user.email,
-                emailVerified: parsedState.user.emailVerified || false,
-                displayName: parsedState.user.displayName || null,
-                photoURL: parsedState.user.photoURL || null,
-                phoneNumber: parsedState.user.phoneNumber || null,
-                metadata: parsedState.user.metadata || { creationTime: '', lastSignInTime: '' },
-                providerData: [],
-                refreshToken: '',
-                tenantId: null,
-                delete: async () => {},
-                getIdToken: async () => '',
-                getIdTokenResult: async () => ({ token: '', expirationTime: '', issuedAtTime: '', authTime: '', signInProvider: null, signInSecondFactor: null, claims: {} }),
-                reload: async () => {},
-                toJSON: () => ({}),
-                isAnonymous: false,
-                providerId: 'firebase',
-              } as User;
-              
-              setUser(minimalUser);
+        console.log('🔧 Initializing AuthContext...');
+        
+        // Wait for Firebase auth to be ready
+        const checkAuthReady = () => {
+          return new Promise<void>((resolve) => {
+            if (auth) {
+              console.log('✅ Firebase Auth instance found');
+              resolve();
+            } else {
+              console.log('⏳ Waiting for Firebase Auth...');
+              setTimeout(() => checkAuthReady().then(resolve), 100);
+            }
+          });
+        };
+
+        await checkAuthReady();
+        console.log('✅ Firebase Auth is ready');
+
+        // Load saved auth state from AsyncStorage
+        try {
+          const savedAuthState = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
+          if (savedAuthState) {
+            const parsedState = JSON.parse(savedAuthState);
+            if (parsedState.user && parsedState.timestamp) {
+              const oneHourAgo = Date.now() - (60 * 60 * 1000);
+              if (parsedState.timestamp > oneHourAgo) {
+                const minimalUser = {
+                  uid: parsedState.user.uid,
+                  email: parsedState.user.email,
+                  emailVerified: parsedState.user.emailVerified || false,
+                  displayName: parsedState.user.displayName || null,
+                  photoURL: parsedState.user.photoURL || null,
+                  phoneNumber: parsedState.user.phoneNumber || null,
+                  metadata: parsedState.user.metadata || { creationTime: '', lastSignInTime: '' },
+                  providerData: [],
+                  refreshToken: '',
+                  tenantId: null,
+                  delete: async () => {},
+                  getIdToken: async () => '',
+                  getIdTokenResult: async () => ({ token: '', expirationTime: '', issuedAtTime: '', authTime: '', signInProvider: null, signInSecondFactor: null, claims: {} }),
+                  reload: async () => {},
+                  toJSON: () => ({}),
+                  isAnonymous: false,
+                  providerId: 'firebase',
+                } as User;
+                
+                setUser(minimalUser);
+                console.log('✅ Loaded user from storage');
+              }
             }
           }
+        } catch (storageError) {
+          console.error('❌ Failed to load auth state from storage:', storageError);
         }
-      } catch (error) {
-        console.error('Failed to load auth state:', error);
-      } finally {
+
+        setAuthReady(true);
         setInitialized(true);
+        console.log('✅ AuthContext initialized successfully');
+      } catch (error) {
+        console.error('❌ AuthContext initialization error:', error);
+        setInitialized(true);
+        setAuthReady(true);
       }
     };
 
-    loadAuthState();
+    initializeAuth();
   }, []);
 
-  // Listen to auth state changes
+  // Listen to auth state changes once initialized
   useEffect(() => {
-    if (!initialized) return;
+    if (!initialized || !authReady) return;
 
+    console.log('👂 Setting up auth state listener...');
+    
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log('🔄 Auth state changed:', firebaseUser ? 'User logged in' : 'No user');
+      
       if (firebaseUser) {
         try {
-          // Force refresh to get latest data
           await firebaseUser.reload();
           const refreshedUser = auth.currentUser;
+          console.log('✅ User refreshed:', refreshedUser?.email);
           setUser(refreshedUser);
           
-          // Save to AsyncStorage
           if (refreshedUser) {
             const userData = {
               uid: refreshedUser.uid,
@@ -116,21 +147,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               user: userData,
               timestamp: Date.now(),
             }));
+            console.log('💾 User data saved to storage');
           }
         } catch (error) {
-          console.error('Error refreshing user:', error);
+          console.error('❌ Error refreshing user:', error);
           setUser(firebaseUser);
         }
       } else {
+        console.log('👋 User logged out, clearing storage');
         setUser(null);
         await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
       }
       
       setLoading(false);
+    }, (error) => {
+      console.error('❌ Auth state change error:', error);
+      setLoading(false);
     });
 
-    return unsubscribe;
-  }, [initialized]);
+    return () => {
+      console.log('🧹 Cleaning up auth listener');
+      unsubscribe();
+    };
+  }, [initialized, authReady]);
 
   // Function to manually refresh user data
   const refreshUserData = async () => {
@@ -139,23 +178,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await user.reload();
         const refreshedUser = auth.currentUser;
         setUser(refreshedUser);
+        console.log('✅ User data refreshed manually');
       } catch (error) {
-        console.error('Failed to refresh user data:', error);
+        console.error('❌ Failed to refresh user data:', error);
       }
     }
   };
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+    if (!auth) {
+      return { success: false, error: 'Authentication service not ready' };
+    }
+
     try {
       setLoading(true);
+      console.log('🔐 Attempting login for:', email);
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       
-      // Force refresh to get latest verification status
       await userCredential.user.reload();
+      console.log('✅ Login successful');
       
       return { success: true };
     } catch (error: any) {
-      console.error('Login error:', error);
+      console.error('❌ Login error:', error);
       
       let errorMessage = 'Login failed. Please try again.';
       
@@ -189,21 +234,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signup = async (name: string, email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+    if (!auth) {
+      return { success: false, error: 'Authentication service not ready' };
+    }
+
     try {
       setLoading(true);
+      console.log('📝 Attempting signup for:', email);
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       
-      // Update profile with display name
       await updateProfile(userCredential.user, {
         displayName: name,
       });
 
-      // Send verification email
       await sendEmailVerification(userCredential.user);
+      console.log('✅ Signup successful');
       
       return { success: true };
     } catch (error: any) {
-      console.error('Signup error:', error);
+      console.error('❌ Signup error:', error);
       
       let errorMessage = 'Signup failed. Please try again.';
       
@@ -234,24 +283,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async (): Promise<void> => {
+    if (!auth) {
+      throw new Error('Authentication service not ready');
+    }
+
     try {
       setLoading(true);
-      console.log('Attempting to sign out from Firebase...');
+      console.log('🚪 Attempting to sign out...');
       
-      // First sign out from Firebase
       await signOut(auth);
       console.log('✅ Firebase sign out successful');
       
-      // Clear AsyncStorage
       await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
       console.log('✅ AsyncStorage cleared');
       
-      // Manually set user to null immediately
       setUser(null);
       console.log('✅ User state set to null');
-      
-      // Optional: Force a small delay to ensure state is cleared
-      await new Promise(resolve => setTimeout(resolve, 100));
       
     } catch (error: any) {
       console.error('❌ Logout error:', error);
@@ -273,11 +320,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const resetPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    if (!auth) {
+      return { success: false, error: 'Authentication service not ready' };
+    }
+
     try {
+      console.log('🔄 Sending password reset to:', email);
       await sendPasswordResetEmail(auth, email);
+      console.log('✅ Password reset email sent');
       return { success: true };
     } catch (error: any) {
-      console.error('Reset password error:', error);
+      console.error('❌ Reset password error:', error);
       
       let errorMessage = 'Failed to send reset email.';
       
@@ -300,20 +353,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const sendVerificationEmail = async (): Promise<{ success: boolean; error?: string }> => {
-    try {
-      if (!auth.currentUser) {
-        return { success: false, error: 'No user logged in' };
-      }
+    if (!auth || !auth.currentUser) {
+      return { success: false, error: 'No user logged in' };
+    }
 
-      // Check if email is already verified
+    try {
       if (auth.currentUser.emailVerified) {
         return { success: false, error: 'Email is already verified' };
       }
 
+      console.log('📧 Sending verification email');
       await sendEmailVerification(auth.currentUser);
+      console.log('✅ Verification email sent');
       return { success: true };
     } catch (error: any) {
-      console.error('Send verification email error:', error);
+      console.error('❌ Send verification email error:', error);
       
       let errorMessage = 'Failed to send verification email.';
       
@@ -333,14 +387,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const updateUserProfile = async (data: { displayName?: string; photoURL?: string }): Promise<{ success: boolean; error?: string }> => {
+    if (!auth || !auth.currentUser) {
+      return { success: false, error: 'No user logged in' };
+    }
+
     try {
-      if (!auth.currentUser) {
-        return { success: false, error: 'No user logged in' };
-      }
-      
+      console.log('🔄 Updating user profile');
       await updateProfile(auth.currentUser, data);
       
-      // Update local state
       const updatedUser = { ...auth.currentUser };
       if (data.displayName !== undefined) {
         Object.assign(updatedUser, { displayName: data.displayName });
@@ -351,7 +405,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       setUser(updatedUser as User);
 
-      // Update AsyncStorage
       try {
         const userData = {
           uid: auth.currentUser.uid,
@@ -367,13 +420,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user: userData,
           timestamp: Date.now(),
         }));
+        console.log('💾 Profile update saved to storage');
       } catch (storageError) {
-        console.error('Failed to update auth state:', storageError);
+        console.error('❌ Failed to update auth state:', storageError);
       }
       
+      console.log('✅ Profile updated successfully');
       return { success: true };
     } catch (error: any) {
-      console.error('Update profile error:', error);
+      console.error('❌ Update profile error:', error);
       
       let errorMessage = 'Failed to update profile.';
       
@@ -390,28 +445,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const updateUserEmail = async (newEmail: string, password: string): Promise<{ success: boolean; error?: string }> => {
-    try {
-      const currentUser = auth.currentUser;
-      if (!currentUser || !currentUser.email) {
-        return { success: false, error: 'No user logged in' };
-      }
+    const currentUser = auth.currentUser;
+    if (!currentUser || !currentUser.email) {
+      return { success: false, error: 'No user logged in' };
+    }
 
-      // Re-authenticate first
+    try {
+      console.log('🔄 Updating user email');
       const credential = EmailAuthProvider.credential(currentUser.email, password);
       await reauthenticateWithCredential(currentUser, credential);
 
-      // Update email
       await updateEmail(currentUser, newEmail);
-
-      // Send verification to new email
       await sendEmailVerification(currentUser);
       
-      // Update local state
       setUser({ ...currentUser } as User);
+      console.log('✅ Email updated successfully');
       
       return { success: true };
     } catch (error: any) {
-      console.error('Update email error:', error);
+      console.error('❌ Update email error:', error);
       
       let errorMessage = 'Failed to update email.';
       
@@ -437,22 +489,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const changePassword = async (currentPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> => {
-    try {
-      const user = auth.currentUser;
-      if (!user || !user.email) {
-        return { success: false, error: 'No user logged in' };
-      }
+    const user = auth.currentUser;
+    if (!user || !user.email) {
+      return { success: false, error: 'No user logged in' };
+    }
 
-      // Re-authenticate user
+    try {
+      console.log('🔄 Changing password');
       const credential = EmailAuthProvider.credential(user.email, currentPassword);
       await reauthenticateWithCredential(user, credential);
       
-      // Change password
       await updatePassword(user, newPassword);
+      console.log('✅ Password changed successfully');
       
       return { success: true };
     } catch (error: any) {
-      console.error('Change password error:', error);
+      console.error('❌ Change password error:', error);
       
       let errorMessage = 'Failed to change password.';
       
@@ -475,39 +527,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const reauthenticate = async (password: string): Promise<boolean> => {
-    try {
-      const user = auth.currentUser;
-      if (!user || !user.email) return false;
+    const user = auth.currentUser;
+    if (!user || !user.email) return false;
 
+    try {
+      console.log('🔐 Re-authenticating user');
       const credential = EmailAuthProvider.credential(user.email, password);
       await reauthenticateWithCredential(user, credential);
+      console.log('✅ Re-authentication successful');
       return true;
     } catch (error) {
-      console.error('Re-authentication error:', error);
+      console.error('❌ Re-authentication error:', error);
       return false;
     }
   };
 
   const deleteAccount = async (password: string): Promise<{ success: boolean; error?: string }> => {
-    try {
-      const user = auth.currentUser;
-      if (!user || !user.email) {
-        return { success: false, error: 'No user logged in' };
-      }
+    const user = auth.currentUser;
+    if (!user || !user.email) {
+      return { success: false, error: 'No user logged in' };
+    }
 
-      // Re-authenticate first
+    try {
+      console.log('🗑️ Deleting account');
       const credential = EmailAuthProvider.credential(user.email, password);
       await reauthenticateWithCredential(user, credential);
       
-      // Delete user
       await user.delete();
-      
-      // Clear local storage
       await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+      console.log('✅ Account deleted successfully');
       
       return { success: true };
     } catch (error: any) {
-      console.error('Delete account error:', error);
+      console.error('❌ Delete account error:', error);
       
       let errorMessage = 'Failed to delete account.';
       
@@ -529,6 +581,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthContextType = {
     user,
     loading,
+    initialized,
     login,
     signup,
     logout,

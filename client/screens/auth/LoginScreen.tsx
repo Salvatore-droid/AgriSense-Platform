@@ -109,7 +109,7 @@ export default function LoginScreen() {
               ]}
             >
               <Feather
-                name="leaf"
+                name="droplet"
                 size={40}
                 color={isDark ? Colors.dark.primary : Colors.light.primary}
               />

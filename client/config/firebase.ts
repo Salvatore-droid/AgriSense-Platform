@@ -1,7 +1,13 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAuth, browserLocalPersistence } from 'firebase/auth';
+import { 
+  initializeAuth, 
+  getReactNativePersistence,
+  Auth,
+  browserLocalPersistence 
+} from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -19,39 +25,18 @@ console.log('🚀 Initializing Firebase...');
 const app = initializeApp(firebaseConfig);
 console.log('✅ Firebase App initialized');
 
-// Platform-specific auth initialization
-let auth;
+// Initialize Auth - SIMPLIFIED VERSION
+let auth: Auth;
 
 try {
-  // Check if we're in a React Native/Expo environment
-  if (typeof navigator !== 'undefined' && navigator.product === 'ReactNative') {
-    // For React Native/Expo
-    console.log('📱 Detected React Native environment');
-    
-    // Dynamically import AsyncStorage only in native environment
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-    
-    // For React Native, we need a different approach
-    // Option 1: Initialize auth without persistence for now
-    auth = initializeAuth(app);
-    console.log('✅ Firebase Auth initialized (React Native)');
-    
-    // Option 2: Try with async import
-    // const { getReactNativePersistence } = require('firebase/auth');
-    // auth = initializeAuth(app, {
-    //   persistence: getReactNativePersistence(AsyncStorage)
-    // });
-    
-  } else {
-    // For Web environment
-    console.log('🌐 Detected Web environment');
-    auth = initializeAuth(app, {
-      persistence: browserLocalPersistence
-    });
-    console.log('✅ Firebase Auth initialized (Web)');
-  }
+  // For React Native/Expo, use AsyncStorage persistence
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage)
+  });
+  console.log('✅ Firebase Auth initialized with AsyncStorage persistence');
 } catch (error) {
-  console.warn('⚠️ Could not initialize auth with persistence, using default:', error);
+  console.warn('⚠️ Could not initialize auth with persistence:', error);
+  // Fallback without persistence
   auth = initializeAuth(app);
   console.log('✅ Firebase Auth initialized (fallback)');
 }
