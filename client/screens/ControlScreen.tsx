@@ -8,7 +8,8 @@ import {
   Alert,
   TextInput,
   Modal,
-  ActivityIndicator
+  ActivityIndicator,
+  TouchableOpacity
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -18,15 +19,17 @@ import * as Haptics from "expo-haptics";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { 
+  getDatabase, 
   ref, 
   get, 
   set, 
   update, 
   push, 
   onValue, 
-  off 
+  off,
+  query,
+  orderByChild
 } from "firebase/database";
-import { getDatabase } from "firebase/database";
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -48,11 +51,11 @@ interface IrrigationSettings {
   autoMode: boolean;
   scheduleTime: string;
   duration: number;
-  selectedFieldId: string;
+  selectedFarmId: string;
   lastUpdated: string;
 }
 
-// Types for Farm/Field
+// Types for Farm
 interface Farm {
   id: string;
   name: string;
@@ -110,145 +113,149 @@ export default function ControlScreen() {
   const [quickFarmName, setQuickFarmName] = useState("");
   const [quickAddError, setQuickAddError] = useState("");
   const [realTimeSensorData, setRealTimeSensorData] = useState({
-    soilMoisture: 0,
-    pH: 0,
-    temperature: 0
+    soilMoisture: 50, // Default values from your database
+    pH: 4, // Default from your database
+    temperature: 25
   });
+
+  // Debug state
+  const [debugInfo, setDebugInfo] = useState<string[]>([]);
+
+  const addDebugInfo = (message: string) => {
+    console.log(`[DEBUG] ${message}`);
+    setDebugInfo(prev => [...prev.slice(-10), `${new Date().toLocaleTimeString()}: ${message}`]);
+  };
 
   // Initialize Firebase Database
   const db = getDatabase();
 
   // Load saved settings and farms
   useEffect(() => {
+    addDebugInfo("ControlScreen mounted");
     loadSettings();
     loadFarmsFromDatabase();
+    
     return () => {
-      // Clean up listeners if any
+      addDebugInfo("ControlScreen unmounted");
     };
   }, []);
 
-  // Save settings when they change
-  useEffect(() => {
-    if (!isLoading && selectedFarm) {
-      saveSettings();
-    }
-  }, [autoMode, scheduleTime, duration, selectedFarm?.id]);
-
-  // Listen to real-time sensor data if a farm is selected
-  useEffect(() => {
-    if (selectedFarm) {
-      const sensorRef = ref(db, `farms/${selectedFarm.id}/sensorData`);
-      
-      const unsubscribe = onValue(sensorRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          setRealTimeSensorData({
-            soilMoisture: data.soilMoisture || 0,
-            pH: data.pH || 0,
-            temperature: data.temperature || 0
-          });
-          
-          // Update the farm in the list
-          setFarms(prevFarms => 
-            prevFarms.map(farm => 
-              farm.id === selectedFarm.id 
-                ? { 
-                    ...farm, 
-                    sensorData: {
-                      soilMoisture: data.soilMoisture || 0,
-                      pH: data.pH || 0,
-                      temperature: data.temperature || 0,
-                      nitrogen: data.nitrogen || 0,
-                      phosphorus: data.phosphorus || 0,
-                      potassium: data.potassium || 0,
-                      lastUpdated: new Date().toISOString()
-                    }
-                  } 
-                : farm
-            )
-          );
-        }
-      }, (error) => {
-        console.error('Error listening to sensor data:', error);
-      });
-
-      return () => {
-        off(sensorRef);
-      };
-    }
-  }, [selectedFarm?.id, db]);
-
   const loadSettings = async () => {
     try {
+      addDebugInfo("Loading settings from AsyncStorage");
       const savedSettings = await AsyncStorage.getItem(IRRIGATION_SETTINGS_KEY);
       if (savedSettings) {
         const settings: IrrigationSettings = JSON.parse(savedSettings);
         setAutoMode(settings.autoMode);
         setScheduleTime(settings.scheduleTime);
         setDuration(settings.duration);
+        addDebugInfo(`Loaded settings: ${JSON.stringify(settings)}`);
+      } else {
+        addDebugInfo("No saved settings found");
       }
     } catch (error) {
+      addDebugInfo(`Failed to load settings: ${error}`);
       console.error('Failed to load irrigation settings:', error);
     }
   };
 
   const loadFarmsFromDatabase = async () => {
     try {
+      addDebugInfo("Loading farms from Firebase");
       setIsLoading(true);
+      
       const farmsRef = ref(db, 'farms');
+      addDebugInfo(`Firebase ref path: ${farmsRef.toString()}`);
+      
       const snapshot = await get(farmsRef);
+      addDebugInfo(`Snapshot exists: ${snapshot.exists()}`);
       
       if (snapshot.exists()) {
         const farmsData = snapshot.val();
-        const farmsArray: Farm[] = Object.keys(farmsData).map(key => ({
-          id: key,
-          ...farmsData[key]
-        }));
+        addDebugInfo(`Farms data received: ${JSON.stringify(farmsData)}`);
+        
+        const farmsArray: Farm[] = Object.keys(farmsData).map(key => {
+          const farmData = farmsData[key];
+          return {
+            id: key,
+            name: farmData.name || 'Unnamed Farm',
+            location: farmData.location || 'Unknown Location',
+            totalAcres: farmData.totalAcres || 0,
+            cropTypes: farmData.cropTypes || ['Other'],
+            soilType: farmData.soilType || 'Other',
+            irrigationType: farmData.irrigationType || 'Manual',
+            createdAt: farmData.createdAt || new Date().toISOString(),
+            updatedAt: farmData.updatedAt || new Date().toISOString(),
+            status: farmData.status || 'healthy',
+            sensorData: farmData.sensorData || {
+              soilMoisture: 50,
+              pH: 4,
+              temperature: 25,
+              nitrogen: 0,
+              phosphorus: 0,
+              potassium: 0,
+              lastUpdated: new Date().toISOString()
+            }
+          };
+        });
         
         setFarms(farmsArray);
+        addDebugInfo(`Processed ${farmsArray.length} farms`);
         
         // Set first farm as selected if no farm is selected
         if (farmsArray.length > 0 && !selectedFarm) {
           setSelectedFarm(farmsArray[0]);
           
-          // Load default sensor data if available
-          const sensorRef = ref(db, `farms/${farmsArray[0].id}/sensorData`);
-          const sensorSnapshot = await get(sensorRef);
-          if (sensorSnapshot.exists()) {
-            const sensorData = sensorSnapshot.val();
+          // Load sensor data from the selected farm
+          if (farmsArray[0].sensorData) {
             setRealTimeSensorData({
-              soilMoisture: sensorData.soilMoisture || 0,
-              pH: sensorData.pH || 0,
-              temperature: sensorData.temperature || 0
+              soilMoisture: farmsArray[0].sensorData.soilMoisture || 50,
+              pH: farmsArray[0].sensorData.pH || 4,
+              temperature: farmsArray[0].sensorData.temperature || 25
             });
           }
+          
+          addDebugInfo(`Selected farm: ${farmsArray[0].name}`);
+        } else if (farmsArray.length === 0) {
+          addDebugInfo("No farms found in database");
         }
       } else {
         // No farms in database
+        addDebugInfo("No farms found in Firebase");
         setFarms([]);
         setSelectedFarm(null);
       }
-    } catch (error) {
+    } catch (error: any) {
+      addDebugInfo(`Error loading farms: ${error.message}`);
       console.error('Error loading farms from database:', error);
-      Alert.alert("Error", "Failed to load farms. Please check your connection.");
+      Alert.alert(
+        "Database Error", 
+        `Failed to load farms: ${error.message}\n\nPlease check your Firebase configuration.`
+      );
     } finally {
       setIsLoading(false);
+      addDebugInfo("Finished loading farms");
     }
   };
 
   const saveSettings = async () => {
-    if (!selectedFarm) return;
+    if (!selectedFarm) {
+      addDebugInfo("Cannot save settings: No farm selected");
+      return;
+    }
     
     try {
       const settings: IrrigationSettings = {
         autoMode,
         scheduleTime,
         duration,
-        selectedFieldId: selectedFarm.id,
+        selectedFarmId: selectedFarm.id,
         lastUpdated: new Date().toISOString(),
       };
       await AsyncStorage.setItem(IRRIGATION_SETTINGS_KEY, JSON.stringify(settings));
+      addDebugInfo("Settings saved to AsyncStorage");
     } catch (error) {
+      addDebugInfo(`Failed to save settings: ${error}`);
       console.error('Failed to save irrigation settings:', error);
     }
   };
@@ -305,6 +312,7 @@ export default function ControlScreen() {
 
     try {
       triggerHaptic('success');
+      addDebugInfo(`Saving schedule for farm: ${selectedFarm.name}`);
       
       // Save schedule to Firebase
       const scheduleRef = ref(db, `farms/${selectedFarm.id}/irrigationSchedule`);
@@ -317,6 +325,7 @@ export default function ControlScreen() {
       });
       
       setNextIrrigationTime(`Scheduled for ${scheduleTime}`);
+      addDebugInfo("Schedule saved to Firebase");
       
       Alert.alert(
         "✅ Schedule Saved",
@@ -324,7 +333,8 @@ export default function ControlScreen() {
         [{ text: "OK", style: "default" }]
       );
 
-    } catch (error) {
+    } catch (error: any) {
+      addDebugInfo(`Error saving schedule: ${error.message}`);
       console.error('Error saving schedule:', error);
       Alert.alert("Error", "Failed to save schedule. Please try again.");
     }
@@ -348,6 +358,7 @@ export default function ControlScreen() {
             try {
               triggerHaptic('impact');
               setIsIrrigating(true);
+              addDebugInfo("Starting irrigation");
               
               // Save irrigation log to Firebase
               const irrigationLogRef = push(ref(db, `farms/${selectedFarm.id}/irrigationLogs`));
@@ -367,6 +378,7 @@ export default function ControlScreen() {
               });
               
               setNextIrrigationTime("Now - In Progress");
+              addDebugInfo("Irrigation started");
               
               Alert.alert(
                 "✅ Irrigation Started",
@@ -374,7 +386,7 @@ export default function ControlScreen() {
                 [{ text: "OK", style: "default" }]
               );
               
-              // Simulate irrigation completion after duration
+              // Simulate irrigation completion after duration (for demo)
               setTimeout(async () => {
                 setIsIrrigating(false);
                 
@@ -390,14 +402,16 @@ export default function ControlScreen() {
                   updatedAt: new Date().toISOString()
                 });
                 
+                addDebugInfo("Irrigation completed");
                 Alert.alert(
                   "✅ Irrigation Completed",
                   `Irrigation for ${selectedFarm.name} has been completed successfully.`
                 );
                 
-              }, duration * 1000); // Convert minutes to milliseconds for simulation
+              }, 5000); // 5 seconds for demo (instead of duration * 1000)
               
-            } catch (error) {
+            } catch (error: any) {
+              addDebugInfo(`Error starting irrigation: ${error.message}`);
               console.error('Error starting irrigation:', error);
               Alert.alert("Error", "Failed to start irrigation. Please check your connection.");
               setIsIrrigating(false);
@@ -408,16 +422,6 @@ export default function ControlScreen() {
     );
   };
 
-  const handleCustomTimeSelect = () => {
-    if (customTime && /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(customTime)) {
-      setScheduleTime(customTime);
-      setShowTimePicker(false);
-      triggerHaptic('success');
-    } else {
-      Alert.alert("Invalid Time", "Please enter a valid time in HH:MM format.");
-    }
-  };
-
   const handleQuickAddFarm = async () => {
     if (!quickFarmName.trim()) {
       setQuickAddError("Farm name is required");
@@ -426,18 +430,28 @@ export default function ControlScreen() {
 
     try {
       setIsLoading(true);
+      addDebugInfo(`Adding new farm: ${quickFarmName}`);
       
       // Create new farm object
       const newFarm: Omit<Farm, 'id'> = {
         name: quickFarmName.trim(),
         location: "Location to be added",
-        totalAcres: 0,
+        totalAcres: 10,
         cropTypes: ["Other"],
         soilType: "Other",
         irrigationType: "Manual Irrigation",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        status: 'healthy'
+        status: 'healthy',
+        sensorData: {
+          soilMoisture: 50, // Default from your database
+          pH: 4, // Default from your database
+          temperature: 25,
+          nitrogen: 0,
+          phosphorus: 0,
+          potassium: 0,
+          lastUpdated: new Date().toISOString()
+        }
       };
       
       // Save to Firebase Realtime Database
@@ -453,9 +467,15 @@ export default function ControlScreen() {
       // Update local state
       setFarms(prev => [...prev, newFarmWithId]);
       setSelectedFarm(newFarmWithId);
+      setRealTimeSensorData({
+        soilMoisture: newFarm.sensorData!.soilMoisture,
+        pH: newFarm.sensorData!.pH,
+        temperature: newFarm.sensorData!.temperature
+      });
       
       triggerHaptic('success');
       setShowQuickAddModal(false);
+      addDebugInfo(`Farm added successfully: ${quickFarmName}`);
       
       Alert.alert(
         "✅ Farm Added Successfully",
@@ -472,16 +492,6 @@ export default function ControlScreen() {
             }
           },
           {
-            text: "Add Details",
-            onPress: () => {
-              try {
-                navigation.navigate('AddFarm');
-              } catch (error) {
-                console.error('Navigation to AddFarm failed:', error);
-              }
-            }
-          },
-          {
             text: "OK",
             style: "default",
           }
@@ -491,275 +501,81 @@ export default function ControlScreen() {
       setQuickFarmName("");
       setQuickAddError("");
       
-    } catch (error) {
+    } catch (error: any) {
+      addDebugInfo(`Error adding farm: ${error.message}`);
       console.error("Error adding farm:", error);
-      Alert.alert("❌ Error", "Failed to add farm. Please try again.");
+      Alert.alert("❌ Error", `Failed to add farm: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const TimeButton = ({ time, selected }: { time: string; selected: boolean }) => (
-    <Pressable
-      onPress={() => {
-        setScheduleTime(time);
-        triggerHaptic('impact');
-      }}
-      style={[
-        styles.timeButton,
-        selected && styles.timeButtonSelected,
-        {
-          backgroundColor: selected
-            ? theme.primary
-            : theme.backgroundSecondary,
-          borderColor: selected ? theme.primary : theme.border,
-        },
-      ]}
-    >
-      <ThemedText
-        style={[styles.timeText, selected && styles.timeTextSelected]}
-      >
-        {time}
-      </ThemedText>
-    </Pressable>
-  );
-
-  const DurationButton = ({ mins, selected }: { mins: number; selected: boolean }) => (
-    <Pressable
-      onPress={() => {
-        setDuration(mins);
-        triggerHaptic('impact');
-      }}
-      style={[
-        styles.durationButton,
-        selected && styles.durationButtonSelected,
-        {
-          backgroundColor: selected
-            ? theme.primary
-            : theme.backgroundSecondary,
-          borderColor: selected ? theme.primary : theme.border,
-        },
-      ]}
-    >
-      <ThemedText
-        style={[styles.durationText, selected && styles.durationTextSelected]}
-      >
-        {mins}m
-      </ThemedText>
-      {selected && (
-        <View style={styles.durationBadge}>
-          <Feather name="check" size={12} color="#FFFFFF" />
-        </View>
-      )}
-    </Pressable>
-  );
-
-  const FieldStatusIndicator = ({ status }: { status: string }) => {
-    let color = theme.success;
-    if (status === 'attention') color = theme.warning;
-    if (status === 'critical') color = theme.critical;
-
-    return (
-      <View style={[styles.statusDot, { backgroundColor: color }]} />
-    );
+  // Refresh farms function
+  const handleRefreshFarms = async () => {
+    addDebugInfo("Manual refresh triggered");
+    await loadFarmsFromDatabase();
   };
 
-  // Add Farm Modal Component
-  const AddFarmModal = () => (
-    <Modal
-      visible={showAddFarmModal}
-      transparent
-      animationType="slide"
-      onRequestClose={() => setShowAddFarmModal(false)}
-    >
-      <Pressable 
-        style={styles.modalOverlay}
-        onPress={() => setShowAddFarmModal(false)}
-      >
-        <Pressable 
-          style={[
-            styles.modalContent,
-            { backgroundColor: theme.cardBackground }
-          ]}
-          onPress={(e) => e.stopPropagation()}
-        >
-          <View style={styles.modalHeader}>
-            <ThemedText type="h4">Add New Farm</ThemedText>
-            <Pressable onPress={() => setShowAddFarmModal(false)}>
-              <Feather name="x" size={24} color={theme.text} />
-            </Pressable>
-          </View>
-          
-          <ThemedText style={[styles.modalDescription, { color: theme.textSecondary }]}>
-            Choose how you want to add a farm
+  // Debug panel (remove in production)
+  const DebugPanel = () => (
+    <View style={[styles.debugPanel, { backgroundColor: theme.cardBackground }]}>
+      <TouchableOpacity onPress={() => setDebugInfo([])} style={styles.debugHeader}>
+        <ThemedText style={styles.debugTitle}>Debug Info</ThemedText>
+        <ThemedText style={[styles.debugCount, { color: theme.textSecondary }]}>
+          {debugInfo.length} messages
+        </ThemedText>
+      </TouchableOpacity>
+      <ScrollView style={styles.debugMessages}>
+        {debugInfo.map((msg, index) => (
+          <ThemedText key={index} style={[styles.debugMessage, { color: theme.textSecondary }]}>
+            {msg}
           </ThemedText>
-          
-          <View style={styles.modalOptions}>
-            <Pressable
-              onPress={() => {
-                setShowAddFarmModal(false);
-                setTimeout(() => setShowQuickAddModal(true), 100);
-              }}
-              style={[
-                styles.modalOption,
-                { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }
-              ]}
-            >
-              <View style={styles.optionIconContainer}>
-                <Feather name="plus-circle" size={24} color={theme.primary} />
-              </View>
-              <View style={styles.optionContent}>
-                <ThemedText style={styles.optionTitle}>Quick Add</ThemedText>
-                <ThemedText style={[styles.optionDescription, { color: theme.textSecondary }]}>
-                  Add a farm with just a name for now
-                </ThemedText>
-              </View>
-              <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-            </Pressable>
-            
-            <Pressable
-              onPress={() => {
-                setShowAddFarmModal(false);
-                try {
-                  navigation.navigate('AddFarm');
-                } catch (error) {
-                  Alert.alert("Navigation Error", "Please check your navigation setup.");
-                }
-              }}
-              style={[
-                styles.modalOption,
-                { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }
-              ]}
-            >
-              <View style={styles.optionIconContainer}>
-                <Feather name="edit" size={24} color={theme.primary} />
-              </View>
-              <View style={styles.optionContent}>
-                <ThemedText style={styles.optionTitle}>Full Details</ThemedText>
-                <ThemedText style={[styles.optionDescription, { color: theme.textSecondary }]}>
-                  Add all farm details including location, crops, etc.
-                </ThemedText>
-              </View>
-              <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-            </Pressable>
-          </View>
-          
-          <View style={styles.modalButtons}>
-            <Button
-              onPress={() => setShowAddFarmModal(false)}
-              variant="outline"
-              style={styles.modalButton}
-            >
-              Cancel
-            </Button>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+        ))}
+      </ScrollView>
+      <View style={styles.debugActions}>
+        <Button 
+          onPress={handleRefreshFarms}
+          variant="outline"
+          style={styles.debugButton}
+          size="small"
+        >
+          Refresh Farms
+        </Button>
+        <Button 
+          onPress={() => addDebugInfo("Manual debug message")}
+          variant="outline"
+          style={styles.debugButton}
+          size="small"
+        >
+          Add Debug
+        </Button>
+      </View>
+    </View>
   );
 
-  // Quick Add Modal Component
-  const QuickAddModal = () => (
-    <Modal
-      visible={showQuickAddModal}
-      transparent
-      animationType="fade"
-      onRequestClose={() => {
-        if (!isLoading) {
-          setShowQuickAddModal(false);
-        }
-      }}
-    >
-      <Pressable 
-        style={styles.modalOverlay}
-        onPress={() => {
-          if (!isLoading) {
-            setShowQuickAddModal(false);
-          }
-        }}
-      >
-        <Pressable 
-          style={[
-            styles.modalContent,
-            { backgroundColor: theme.cardBackground }
-          ]}
-          onPress={(e) => e.stopPropagation()}
-        >
-          <View style={styles.modalHeader}>
-            <ThemedText type="h4">Quick Add Farm</ThemedText>
-            {!isLoading && (
-              <Pressable onPress={() => setShowQuickAddModal(false)}>
-                <Feather name="x" size={24} color={theme.text} />
-              </Pressable>
-            )}
-          </View>
-          
-          <ThemedText style={[styles.modalDescription, { color: theme.textSecondary }]}>
-            Enter a name for your new farm
-          </ThemedText>
-          
-          <TextInput
-            style={[
-              styles.quickAddInput,
-              {
-                backgroundColor: theme.backgroundSecondary,
-                color: theme.text,
-                borderColor: quickAddError ? theme.critical : theme.border,
-              }
-            ]}
-            value={quickFarmName}
-            onChangeText={(text) => {
-              setQuickFarmName(text);
-              if (quickAddError) setQuickAddError("");
-            }}
-            placeholder="e.g., North Field, Main Farm, etc."
-            placeholderTextColor={theme.textSecondary}
-            autoFocus
-            onSubmitEditing={handleQuickAddFarm}
-            editable={!isLoading}
-          />
-          
-          {quickAddError && (
-            <ThemedText style={[styles.errorText, { color: theme.critical }]}>
-              {quickAddError}
-            </ThemedText>
-          )}
-          
-          <View style={styles.modalButtons}>
-            <Button
-              onPress={() => {
-                if (!isLoading) {
-                  setShowQuickAddModal(false);
-                }
-              }}
-              variant="outline"
-              style={styles.modalButton}
-              disabled={isLoading}
-            >
-              Cancel
-            </Button>
-            <Button
-              onPress={handleQuickAddFarm}
-              variant="primary"
-              style={styles.modalButton}
-              disabled={!quickFarmName.trim() || isLoading}
-              loading={isLoading}
-            >
-              Add Farm
-            </Button>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-
+  // Loading state
   if (isLoading && !showQuickAddModal) {
     return (
-      <ThemedView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.primary} />
-        <ThemedText style={[styles.loadingText, { color: theme.textSecondary }]}>
-          Loading farms and settings...
-        </ThemedText>
+      <ThemedView style={styles.container}>
+        <View style={[styles.loadingContainer, { paddingTop: insets.top + 100 }]}>
+          <ActivityIndicator size="large" color={theme.primary} />
+          <ThemedText style={[styles.loadingText, { color: theme.textSecondary, marginTop: Spacing.lg }]}>
+            Loading farms from database...
+          </ThemedText>
+          <ThemedText style={[styles.loadingSubtext, { color: theme.textSecondary, marginTop: Spacing.sm }]}>
+            Please check your Firebase connection if this takes too long
+          </ThemedText>
+          <Button 
+            onPress={handleRefreshFarms} 
+            variant="outline" 
+            style={{ marginTop: Spacing.lg }}
+          >
+            Retry Loading
+          </Button>
+          
+          {/* Debug panel in loading state */}
+          <DebugPanel />
+        </View>
       </ThemedView>
     );
   }
@@ -776,6 +592,7 @@ export default function ControlScreen() {
           },
         ]}
         showsVerticalScrollIndicator={false}
+        refreshControl={undefined} // You can add pull-to-refresh here
       >
         {/* Header with Add Farm Button */}
         <View style={styles.header}>
@@ -793,10 +610,10 @@ export default function ControlScreen() {
               </ThemedText>
             </Pressable>
             <Pressable
-              onPress={() => Alert.alert("Help", "Adjust irrigation settings for your farms.")}
+              onPress={handleRefreshFarms}
               style={styles.helpButton}
             >
-              <Feather name="help-circle" size={20} color={theme.textSecondary} />
+              <Feather name="refresh-cw" size={20} color={theme.textSecondary} />
             </Pressable>
           </View>
         </View>
@@ -853,7 +670,10 @@ export default function ControlScreen() {
                       {selectedFarm?.name || "Select a Farm"}
                     </ThemedText>
                     {selectedFarm && (
-                      <FieldStatusIndicator status={selectedFarm.status} />
+                      <View style={[styles.statusDot, { 
+                        backgroundColor: selectedFarm.status === 'healthy' ? theme.success : 
+                                      selectedFarm.status === 'attention' ? theme.warning : theme.critical 
+                      }]} />
                     )}
                   </View>
                   {selectedFarm && (
@@ -861,13 +681,13 @@ export default function ControlScreen() {
                       <View style={styles.farmDetail}>
                         <Feather name="map" size={12} color={theme.textSecondary} />
                         <ThemedText style={[styles.farmDetailText, { color: theme.textSecondary }]}>
-                          {selectedFarm.totalAcres} acres
+                          {selectedFarm.totalAcres} acres • {selectedFarm.location}
                         </ThemedText>
                       </View>
                       <View style={styles.farmDetail}>
                         <Feather name="droplet" size={12} color={theme.textSecondary} />
                         <ThemedText style={[styles.farmDetailText, { color: theme.textSecondary }]}>
-                          {realTimeSensorData.soilMoisture}% moisture
+                          {realTimeSensorData.soilMoisture}% moisture • pH: {realTimeSensorData.pH}
                         </ThemedText>
                       </View>
                     </View>
@@ -895,6 +715,11 @@ export default function ControlScreen() {
                         setSelectedFarm(farm);
                         setShowFarmPicker(false);
                         triggerHaptic('impact');
+                        setRealTimeSensorData({
+                          soilMoisture: farm.sensorData?.soilMoisture || 50,
+                          pH: farm.sensorData?.pH || 4,
+                          temperature: farm.sensorData?.temperature || 25
+                        });
                       }}
                       style={[
                         styles.farmOption,
@@ -902,7 +727,10 @@ export default function ControlScreen() {
                       ]}
                     >
                       <View style={styles.farmOptionContent}>
-                        <FieldStatusIndicator status={farm.status} />
+                        <View style={[styles.statusDot, { 
+                          backgroundColor: farm.status === 'healthy' ? theme.success : 
+                                        farm.status === 'attention' ? theme.warning : theme.critical 
+                        }]} />
                         <View style={styles.farmOptionInfo}>
                           <ThemedText style={styles.farmOptionName}>{farm.name}</ThemedText>
                           <ThemedText style={[styles.farmOptionDetails, { color: theme.textSecondary }]}>
@@ -912,7 +740,7 @@ export default function ControlScreen() {
                       </View>
                       <View style={styles.farmOptionRight}>
                         <ThemedText style={[styles.farmMoisture, { color: theme.textSecondary }]}>
-                          {farm.sensorData?.soilMoisture || 0}%
+                          {farm.sensorData?.soilMoisture || 50}%
                         </ThemedText>
                         {farm.id === selectedFarm?.id && (
                           <Feather
@@ -1005,133 +833,182 @@ export default function ControlScreen() {
           </View>
         )}
 
-        {/* Irrigation Mode Section */}
+        {/* Irrigation Controls (only shown when farm is selected) */}
         {selectedFarm && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <ThemedText type="h4" style={styles.sectionTitle}>
-                Irrigation Mode
-              </ThemedText>
-              <View style={styles.modeBadge}>
-                <ThemedText style={[
-                  styles.modeBadgeText,
-                  { color: autoMode ? theme.success : theme.warning }
-                ]}>
-                  {autoMode ? "AI OPTIMIZED" : "MANUAL"}
+          <>
+            {/* Irrigation Mode Section */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <ThemedText type="h4" style={styles.sectionTitle}>
+                  Irrigation Mode
                 </ThemedText>
-              </View>
-            </View>
-            
-            <View style={[
-              styles.modeCard,
-              { backgroundColor: theme.cardBackground, borderColor: theme.border },
-              Shadows.small,
-            ]}>
-              <View style={styles.modeContent}>
-                <View style={styles.modeInfo}>
-                  <Feather 
-                    name={autoMode ? "cpu" : "sliders"} 
-                    size={24} 
-                    color={autoMode ? theme.success : theme.warning} 
-                  />
-                  <View style={styles.modeText}>
-                    <ThemedText style={styles.modeTitle}>
-                      {autoMode ? "AI-Optimized Mode" : "Manual Control"}
-                    </ThemedText>
-                    <ThemedText style={[styles.modeDescription, { color: theme.textSecondary }]}>
-                      {autoMode 
-                        ? "AI automatically adjusts based on weather and soil data" 
-                        : "You control all irrigation settings manually"}
-                    </ThemedText>
-                  </View>
+                <View style={styles.modeBadge}>
+                  <ThemedText style={[
+                    styles.modeBadgeText,
+                    { color: autoMode ? theme.success : theme.warning }
+                  ]}>
+                    {autoMode ? "AI OPTIMIZED" : "MANUAL"}
+                  </ThemedText>
                 </View>
-                
-                <Switch
-                  value={autoMode}
-                  onValueChange={handleToggleMode}
-                  trackColor={{
-                    false: theme.backgroundTertiary,
-                    true: theme.primary,
-                  }}
-                  thumbColor="#FFFFFF"
-                  ios_backgroundColor={theme.backgroundTertiary}
-                  disabled={!selectedFarm}
-                />
+              </View>
+              
+              <View style={[
+                styles.modeCard,
+                { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                Shadows.small,
+              ]}>
+                <View style={styles.modeContent}>
+                  <View style={styles.modeInfo}>
+                    <Feather 
+                      name={autoMode ? "cpu" : "sliders"} 
+                      size={24} 
+                      color={autoMode ? theme.success : theme.warning} 
+                    />
+                    <View style={styles.modeText}>
+                      <ThemedText style={styles.modeTitle}>
+                        {autoMode ? "AI-Optimized Mode" : "Manual Control"}
+                      </ThemedText>
+                      <ThemedText style={[styles.modeDescription, { color: theme.textSecondary }]}>
+                        {autoMode 
+                          ? "AI automatically adjusts based on weather and soil data" 
+                          : "You control all irrigation settings manually"}
+                      </ThemedText>
+                    </View>
+                  </View>
+                  
+                  <Switch
+                    value={autoMode}
+                    onValueChange={handleToggleMode}
+                    trackColor={{
+                      false: theme.backgroundTertiary,
+                      true: theme.primary,
+                    }}
+                    thumbColor="#FFFFFF"
+                    ios_backgroundColor={theme.backgroundTertiary}
+                    disabled={isIrrigating}
+                  />
+                </View>
               </View>
             </View>
-          </View>
-        )}
 
-        {/* Schedule Time Section */}
-        {selectedFarm && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
+            {/* Schedule Time Section */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <ThemedText type="h4" style={styles.sectionTitle}>
+                  Schedule Time
+                </ThemedText>
+                <Pressable
+                  onPress={() => setShowTimePicker(true)}
+                  style={styles.customTimeButton}
+                >
+                  <Feather name="clock" size={14} color={theme.textSecondary} />
+                  <ThemedText style={[styles.customTimeText, { color: theme.textSecondary }]}>
+                    Custom
+                  </ThemedText>
+                </Pressable>
+              </View>
+              
+              <View style={styles.timeGrid}>
+                {["05:00", "06:00", "07:00", "18:00", "19:00", "20:00"].map((time) => (
+                  <Pressable
+                    key={time}
+                    onPress={() => {
+                      setScheduleTime(time);
+                      triggerHaptic('impact');
+                    }}
+                    style={[
+                      styles.timeButton,
+                      scheduleTime === time && styles.timeButtonSelected,
+                      {
+                        backgroundColor: scheduleTime === time
+                          ? theme.primary
+                          : theme.backgroundSecondary,
+                        borderColor: scheduleTime === time ? theme.primary : theme.border,
+                      },
+                    ]}
+                  >
+                    <ThemedText
+                      style={[styles.timeText, scheduleTime === time && styles.timeTextSelected]}
+                    >
+                      {time}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Duration Section */}
+            <View style={styles.section}>
               <ThemedText type="h4" style={styles.sectionTitle}>
-                Schedule Time
+                Duration
               </ThemedText>
-              <Pressable
-                onPress={() => setShowTimePicker(true)}
-                style={styles.customTimeButton}
-              >
-                <Feather name="clock" size={14} color={theme.textSecondary} />
-                <ThemedText style={[styles.customTimeText, { color: theme.textSecondary }]}>
-                  Custom
-                </ThemedText>
-              </Pressable>
+              <View style={styles.durationGrid}>
+                {[15, 30, 45, 60, 90].map((mins) => (
+                  <Pressable
+                    key={mins}
+                    onPress={() => {
+                      setDuration(mins);
+                      triggerHaptic('impact');
+                    }}
+                    style={[
+                      styles.durationButton,
+                      duration === mins && styles.durationButtonSelected,
+                      {
+                        backgroundColor: duration === mins
+                          ? theme.primary
+                          : theme.backgroundSecondary,
+                        borderColor: duration === mins ? theme.primary : theme.border,
+                      },
+                    ]}
+                  >
+                    <ThemedText
+                      style={[styles.durationText, duration === mins && styles.durationTextSelected]}
+                    >
+                      {mins}m
+                    </ThemedText>
+                    {duration === mins && (
+                      <View style={styles.durationBadge}>
+                        <Feather name="check" size={12} color="#FFFFFF" />
+                      </View>
+                    )}
+                  </Pressable>
+                ))}
+              </View>
+              <ThemedText style={[styles.durationHint, { color: theme.textSecondary }]}>
+                Estimated water usage: ~{Math.round(duration * 100)} liters
+              </ThemedText>
             </View>
-            
-            <View style={styles.timeGrid}>
-              {["05:00", "06:00", "07:00", "18:00", "19:00", "20:00"].map((time) => (
-                <TimeButton key={time} time={time} selected={scheduleTime === time} />
-              ))}
+
+            {/* Status Card */}
+            <View style={styles.section}>
+              <View style={[
+                styles.statusCard,
+                { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                Shadows.small,
+              ]}>
+                <View style={styles.statusIcon}>
+                  <Feather
+                    name={isIrrigating ? "play-circle" : "clock"}
+                    size={28}
+                    color={isIrrigating ? theme.success : theme.primary}
+                  />
+                </View>
+                <View style={styles.statusInfo}>
+                  <ThemedText style={[styles.statusLabel, { color: theme.textSecondary }]}>
+                    {isIrrigating ? "Currently Irrigating" : "Next Scheduled Irrigation"}
+                  </ThemedText>
+                  <ThemedText type="h3">{nextIrrigationTime}</ThemedText>
+                  <ThemedText style={[styles.statusField, { color: theme.textSecondary }]}>
+                    for {selectedFarm.name}
+                  </ThemedText>
+                </View>
+              </View>
             </View>
-          </View>
+          </>
         )}
 
-        {/* Duration Section */}
-        {selectedFarm && (
-          <View style={styles.section}>
-            <ThemedText type="h4" style={styles.sectionTitle}>
-              Duration
-            </ThemedText>
-            <View style={styles.durationGrid}>
-              {[15, 30, 45, 60, 90].map((mins) => (
-                <DurationButton key={mins} mins={mins} selected={duration === mins} />
-              ))}
-            </View>
-            <ThemedText style={[styles.durationHint, { color: theme.textSecondary }]}>
-              Estimated water usage: ~{Math.round(duration * 100)} liters
-            </ThemedText>
-          </View>
-        )}
-
-        {/* Status Card */}
-        {selectedFarm && (
-          <View style={styles.section}>
-            <View style={[
-              styles.statusCard,
-              { backgroundColor: theme.cardBackground, borderColor: theme.border },
-              Shadows.small,
-            ]}>
-              <View style={styles.statusIcon}>
-                <Feather
-                  name={isIrrigating ? "play-circle" : "clock"}
-                  size={28}
-                  color={isIrrigating ? theme.success : theme.primary}
-                />
-              </View>
-              <View style={styles.statusInfo}>
-                <ThemedText style={[styles.statusLabel, { color: theme.textSecondary }]}>
-                  {isIrrigating ? "Currently Irrigating" : "Next Scheduled Irrigation"}
-                </ThemedText>
-                <ThemedText type="h3">{nextIrrigationTime}</ThemedText>
-                <ThemedText style={[styles.statusField, { color: theme.textSecondary }]}>
-                  for {selectedFarm.name}
-                </ThemedText>
-              </View>
-            </View>
-          </View>
-        )}
+        {/* Debug Panel (remove in production) */}
+        {__DEV__ && <DebugPanel />}
 
       </ScrollView>
 
@@ -1218,7 +1095,15 @@ export default function ControlScreen() {
                 Cancel
               </Button>
               <Button
-                onPress={handleCustomTimeSelect}
+                onPress={() => {
+                  if (customTime && /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(customTime)) {
+                    setScheduleTime(customTime);
+                    setShowTimePicker(false);
+                    triggerHaptic('success');
+                  } else {
+                    Alert.alert("Invalid Time", "Please enter a valid time in HH:MM format.");
+                  }
+                }}
                 variant="primary"
                 style={styles.modalButton}
               >
@@ -1230,10 +1115,193 @@ export default function ControlScreen() {
       </Modal>
 
       {/* Add Farm Modal */}
-      <AddFarmModal />
+      {showAddFarmModal && (
+        <Modal
+          visible={showAddFarmModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowAddFarmModal(false)}
+        >
+          <Pressable 
+            style={styles.modalOverlay}
+            onPress={() => setShowAddFarmModal(false)}
+          >
+            <Pressable 
+              style={[
+                styles.modalContent,
+                { backgroundColor: theme.cardBackground }
+              ]}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.modalHeader}>
+                <ThemedText type="h4">Add New Farm</ThemedText>
+                <Pressable onPress={() => setShowAddFarmModal(false)}>
+                  <Feather name="x" size={24} color={theme.text} />
+                </Pressable>
+              </View>
+              
+              <ThemedText style={[styles.modalDescription, { color: theme.textSecondary }]}>
+                Choose how you want to add a farm
+              </ThemedText>
+              
+              <View style={styles.modalOptions}>
+                <Pressable
+                  onPress={() => {
+                    setShowAddFarmModal(false);
+                    setTimeout(() => setShowQuickAddModal(true), 100);
+                  }}
+                  style={[
+                    styles.modalOption,
+                    { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }
+                  ]}
+                >
+                  <View style={styles.optionIconContainer}>
+                    <Feather name="plus-circle" size={24} color={theme.primary} />
+                  </View>
+                  <View style={styles.optionContent}>
+                    <ThemedText style={styles.optionTitle}>Quick Add</ThemedText>
+                    <ThemedText style={[styles.optionDescription, { color: theme.textSecondary }]}>
+                      Add a farm with just a name for now
+                    </ThemedText>
+                  </View>
+                  <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+                </Pressable>
+                
+                <Pressable
+                  onPress={() => {
+                    setShowAddFarmModal(false);
+                    try {
+                      navigation.navigate('AddFarm');
+                    } catch (error) {
+                      Alert.alert("Navigation Error", "Please check your navigation setup.");
+                    }
+                  }}
+                  style={[
+                    styles.modalOption,
+                    { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }
+                  ]}
+                >
+                  <View style={styles.optionIconContainer}>
+                    <Feather name="edit" size={24} color={theme.primary} />
+                  </View>
+                  <View style={styles.optionContent}>
+                    <ThemedText style={styles.optionTitle}>Full Details</ThemedText>
+                    <ThemedText style={[styles.optionDescription, { color: theme.textSecondary }]}>
+                      Add all farm details including location, crops, etc.
+                    </ThemedText>
+                  </View>
+                  <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+                </Pressable>
+              </View>
+              
+              <View style={styles.modalButtons}>
+                <Button
+                  onPress={() => setShowAddFarmModal(false)}
+                  variant="outline"
+                  style={styles.modalButton}
+                >
+                  Cancel
+                </Button>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
       
       {/* Quick Add Modal */}
-      <QuickAddModal />
+      {showQuickAddModal && (
+        <Modal
+          visible={showQuickAddModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => {
+            if (!isLoading) {
+              setShowQuickAddModal(false);
+            }
+          }}
+        >
+          <Pressable 
+            style={styles.modalOverlay}
+            onPress={() => {
+              if (!isLoading) {
+                setShowQuickAddModal(false);
+              }
+            }}
+          >
+            <Pressable 
+              style={[
+                styles.modalContent,
+                { backgroundColor: theme.cardBackground }
+              ]}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.modalHeader}>
+                <ThemedText type="h4">Quick Add Farm</ThemedText>
+                {!isLoading && (
+                  <Pressable onPress={() => setShowQuickAddModal(false)}>
+                    <Feather name="x" size={24} color={theme.text} />
+                  </Pressable>
+                )}
+              </View>
+              
+              <ThemedText style={[styles.modalDescription, { color: theme.textSecondary }]}>
+                Enter a name for your new farm
+              </ThemedText>
+              
+              <TextInput
+                style={[
+                  styles.quickAddInput,
+                  {
+                    backgroundColor: theme.backgroundSecondary,
+                    color: theme.text,
+                    borderColor: quickAddError ? theme.critical : theme.border,
+                  }
+                ]}
+                value={quickFarmName}
+                onChangeText={(text) => {
+                  setQuickFarmName(text);
+                  if (quickAddError) setQuickAddError("");
+                }}
+                placeholder="e.g., North Field, Main Farm, etc."
+                placeholderTextColor={theme.textSecondary}
+                autoFocus
+                onSubmitEditing={handleQuickAddFarm}
+                editable={!isLoading}
+              />
+              
+              {quickAddError && (
+                <ThemedText style={[styles.errorText, { color: theme.critical }]}>
+                  {quickAddError}
+                </ThemedText>
+              )}
+              
+              <View style={styles.modalButtons}>
+                <Button
+                  onPress={() => {
+                    if (!isLoading) {
+                      setShowQuickAddModal(false);
+                    }
+                  }}
+                  variant="outline"
+                  style={styles.modalButton}
+                  disabled={isLoading}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onPress={handleQuickAddFarm}
+                  variant="primary"
+                  style={styles.modalButton}
+                  disabled={!quickFarmName.trim() || isLoading}
+                  loading={isLoading}
+                >
+                  Add Farm
+                </Button>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
     </ThemedView>
   );
 }
@@ -1255,8 +1323,50 @@ const styles = StyleSheet.create({
     padding: Spacing.xl,
   },
   loadingText: {
+    fontSize: 16,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  loadingSubtext: {
     fontSize: 14,
-    marginTop: Spacing.lg,
+    textAlign: 'center',
+  },
+  debugPanel: {
+    marginTop: Spacing.xl,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: '#FF0000',
+    padding: Spacing.md,
+  },
+  debugHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  debugTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FF0000',
+  },
+  debugCount: {
+    fontSize: 10,
+  },
+  debugMessages: {
+    maxHeight: 100,
+    marginBottom: Spacing.sm,
+  },
+  debugMessage: {
+    fontSize: 10,
+    fontFamily: 'monospace',
+    marginBottom: 2,
+  },
+  debugActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  debugButton: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -1297,7 +1407,8 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
   },
   sectionTitle: {
-    // Style handled by ThemedText
+    fontSize: 18,
+    fontWeight: '600',
   },
   sectionSubtitle: {
     fontSize: 13,
@@ -1351,6 +1462,11 @@ const styles = StyleSheet.create({
   farmName: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   farmDetails: {
     flexDirection: 'row',
@@ -1429,11 +1545,6 @@ const styles = StyleSheet.create({
   addNewFarmText: {
     fontSize: 14,
     fontWeight: '600',
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
   },
   sensorCard: {
     borderRadius: BorderRadius.lg,
