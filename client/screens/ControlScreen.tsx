@@ -7,7 +7,8 @@ import {
   Pressable, 
   Alert,
   TextInput,
-  Modal
+  Modal,
+  ActivityIndicator
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -16,13 +17,22 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { 
+  ref, 
+  get, 
+  set, 
+  update, 
+  push, 
+  onValue, 
+  off 
+} from "firebase/database";
+import { getDatabase } from "firebase/database";
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { Button } from "@/components/Button";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius, Colors, Shadows } from "@/constants/theme";
-import { mockFields, mockIrrigationLogs } from "@/lib/mockData";
 
 // Define your navigation types
 type RootStackParamList = {
@@ -42,6 +52,34 @@ interface IrrigationSettings {
   lastUpdated: string;
 }
 
+// Types for Farm/Field
+interface Farm {
+  id: string;
+  name: string;
+  location: string;
+  totalAcres: number;
+  cropTypes: string[];
+  soilType: string;
+  irrigationType: string;
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+  };
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'healthy' | 'attention' | 'critical';
+  sensorData?: {
+    soilMoisture: number;
+    pH: number;
+    temperature: number;
+    nitrogen: number;
+    phosphorus: number;
+    potassium: number;
+    lastUpdated: string;
+  };
+}
+
 // Storage key
 const IRRIGATION_SETTINGS_KEY = '@agrisense_irrigation_settings';
 
@@ -51,32 +89,94 @@ export default function ControlScreen() {
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const { theme, isDark } = useTheme();
 
-  const [selectedField, setSelectedField] = useState(mockFields[0]);
+  // State for farms/fields
+  const [farms, setFarms] = useState<Farm[]>([]);
+  const [selectedFarm, setSelectedFarm] = useState<Farm | null>(null);
+  
+  // Irrigation control state
   const [autoMode, setAutoMode] = useState(true);
   const [scheduleTime, setScheduleTime] = useState("06:00");
   const [duration, setDuration] = useState(45);
-  const [showFieldPicker, setShowFieldPicker] = useState(false);
+  
+  // UI state
+  const [showFarmPicker, setShowFarmPicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [customTime, setCustomTime] = useState("06:00");
   const [isLoading, setIsLoading] = useState(true);
-  const [nextIrrigationTime, setNextIrrigationTime] = useState("2h 15m");
+  const [isIrrigating, setIsIrrigating] = useState(false);
+  const [nextIrrigationTime, setNextIrrigationTime] = useState("No schedule set");
   const [showAddFarmModal, setShowAddFarmModal] = useState(false);
   const [showQuickAddModal, setShowQuickAddModal] = useState(false);
   const [quickFarmName, setQuickFarmName] = useState("");
   const [quickAddError, setQuickAddError] = useState("");
-  const [fields, setFields] = useState(mockFields);
+  const [realTimeSensorData, setRealTimeSensorData] = useState({
+    soilMoisture: 0,
+    pH: 0,
+    temperature: 0
+  });
 
-  // Load saved settings
+  // Initialize Firebase Database
+  const db = getDatabase();
+
+  // Load saved settings and farms
   useEffect(() => {
     loadSettings();
+    loadFarmsFromDatabase();
+    return () => {
+      // Clean up listeners if any
+    };
   }, []);
 
   // Save settings when they change
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoading && selectedFarm) {
       saveSettings();
     }
-  }, [autoMode, scheduleTime, duration, selectedField.id]);
+  }, [autoMode, scheduleTime, duration, selectedFarm?.id]);
+
+  // Listen to real-time sensor data if a farm is selected
+  useEffect(() => {
+    if (selectedFarm) {
+      const sensorRef = ref(db, `farms/${selectedFarm.id}/sensorData`);
+      
+      const unsubscribe = onValue(sensorRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          setRealTimeSensorData({
+            soilMoisture: data.soilMoisture || 0,
+            pH: data.pH || 0,
+            temperature: data.temperature || 0
+          });
+          
+          // Update the farm in the list
+          setFarms(prevFarms => 
+            prevFarms.map(farm => 
+              farm.id === selectedFarm.id 
+                ? { 
+                    ...farm, 
+                    sensorData: {
+                      soilMoisture: data.soilMoisture || 0,
+                      pH: data.pH || 0,
+                      temperature: data.temperature || 0,
+                      nitrogen: data.nitrogen || 0,
+                      phosphorus: data.phosphorus || 0,
+                      potassium: data.potassium || 0,
+                      lastUpdated: new Date().toISOString()
+                    }
+                  } 
+                : farm
+            )
+          );
+        }
+      }, (error) => {
+        console.error('Error listening to sensor data:', error);
+      });
+
+      return () => {
+        off(sensorRef);
+      };
+    }
+  }, [selectedFarm?.id, db]);
 
   const loadSettings = async () => {
     try {
@@ -86,26 +186,65 @@ export default function ControlScreen() {
         setAutoMode(settings.autoMode);
         setScheduleTime(settings.scheduleTime);
         setDuration(settings.duration);
-        
-        const field = fields.find(f => f.id === settings.selectedFieldId);
-        if (field) {
-          setSelectedField(field);
-        }
       }
     } catch (error) {
       console.error('Failed to load irrigation settings:', error);
+    }
+  };
+
+  const loadFarmsFromDatabase = async () => {
+    try {
+      setIsLoading(true);
+      const farmsRef = ref(db, 'farms');
+      const snapshot = await get(farmsRef);
+      
+      if (snapshot.exists()) {
+        const farmsData = snapshot.val();
+        const farmsArray: Farm[] = Object.keys(farmsData).map(key => ({
+          id: key,
+          ...farmsData[key]
+        }));
+        
+        setFarms(farmsArray);
+        
+        // Set first farm as selected if no farm is selected
+        if (farmsArray.length > 0 && !selectedFarm) {
+          setSelectedFarm(farmsArray[0]);
+          
+          // Load default sensor data if available
+          const sensorRef = ref(db, `farms/${farmsArray[0].id}/sensorData`);
+          const sensorSnapshot = await get(sensorRef);
+          if (sensorSnapshot.exists()) {
+            const sensorData = sensorSnapshot.val();
+            setRealTimeSensorData({
+              soilMoisture: sensorData.soilMoisture || 0,
+              pH: sensorData.pH || 0,
+              temperature: sensorData.temperature || 0
+            });
+          }
+        }
+      } else {
+        // No farms in database
+        setFarms([]);
+        setSelectedFarm(null);
+      }
+    } catch (error) {
+      console.error('Error loading farms from database:', error);
+      Alert.alert("Error", "Failed to load farms. Please check your connection.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const saveSettings = async () => {
+    if (!selectedFarm) return;
+    
     try {
       const settings: IrrigationSettings = {
         autoMode,
         scheduleTime,
         duration,
-        selectedFieldId: selectedField.id,
+        selectedFieldId: selectedFarm.id,
         lastUpdated: new Date().toISOString(),
       };
       await AsyncStorage.setItem(IRRIGATION_SETTINGS_KEY, JSON.stringify(settings));
@@ -159,41 +298,47 @@ export default function ControlScreen() {
   };
 
   const handleSaveSchedule = async () => {
+    if (!selectedFarm) {
+      Alert.alert("No Farm Selected", "Please select a farm first.");
+      return;
+    }
+
     try {
       triggerHaptic('success');
       
-      // In production, this would call your backend API
-      // For now, we'll simulate the API call
-      setIsLoading(true);
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Save schedule to Firebase
+      const scheduleRef = ref(db, `farms/${selectedFarm.id}/irrigationSchedule`);
+      await set(scheduleRef, {
+        autoMode,
+        scheduleTime,
+        duration,
+        lastUpdated: new Date().toISOString(),
+        nextIrrigation: scheduleTime
+      });
+      
+      setNextIrrigationTime(`Scheduled for ${scheduleTime}`);
       
       Alert.alert(
         "✅ Schedule Saved",
-        `Irrigation scheduled for ${selectedField.name} at ${scheduleTime} for ${duration} minutes.`,
-        [
-          {
-            text: "View Schedule",
-            onPress: () => {
-              // Navigate to schedule details
-            },
-          },
-          { text: "OK", style: "default" },
-        ]
+        `Irrigation scheduled for ${selectedFarm.name} at ${scheduleTime} for ${duration} minutes.`,
+        [{ text: "OK", style: "default" }]
       );
 
-      // Update next irrigation time
-      setNextIrrigationTime("Scheduled for " + scheduleTime);
     } catch (error) {
+      console.error('Error saving schedule:', error);
       Alert.alert("Error", "Failed to save schedule. Please try again.");
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const handleStartNow = async () => {
+    if (!selectedFarm) {
+      Alert.alert("No Farm Selected", "Please select a farm first.");
+      return;
+    }
+
     Alert.alert(
       "🚀 Start Irrigation Now?",
-      `This will start manual irrigation for ${selectedField.name} for ${duration} minutes.`,
+      `This will start manual irrigation for ${selectedFarm.name} for ${duration} minutes.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -202,31 +347,60 @@ export default function ControlScreen() {
           onPress: async () => {
             try {
               triggerHaptic('impact');
-              setIsLoading(true);
+              setIsIrrigating(true);
               
-              // Simulate API call
-              await new Promise(resolve => setTimeout(resolve, 1500));
+              // Save irrigation log to Firebase
+              const irrigationLogRef = push(ref(db, `farms/${selectedFarm.id}/irrigationLogs`));
+              await set(irrigationLogRef, {
+                mode: 'manual',
+                duration,
+                startTime: new Date().toISOString(),
+                status: 'in_progress',
+                estimatedWaterUsage: duration * 100 // liters per minute
+              });
+              
+              // Update farm status
+              const farmRef = ref(db, `farms/${selectedFarm.id}`);
+              await update(farmRef, {
+                status: 'attention', // Change status during irrigation
+                updatedAt: new Date().toISOString()
+              });
+              
+              setNextIrrigationTime("Now - In Progress");
               
               Alert.alert(
                 "✅ Irrigation Started",
-                `Manual irrigation started for ${selectedField.name}. Duration: ${duration} minutes.\n\nWater usage: ${Math.round(duration * 100)} liters`,
-                [
-                  {
-                    text: "View Progress",
-                    onPress: () => {
-                      // Navigate to irrigation progress screen
-                    },
-                  },
-                  { text: "OK", style: "default" },
-                ]
+                `Manual irrigation started for ${selectedFarm.name}. Duration: ${duration} minutes.\n\nEstimated water usage: ${duration * 100} liters`,
+                [{ text: "OK", style: "default" }]
               );
               
-              // Update next irrigation time
-              setNextIrrigationTime("Now - In Progress");
+              // Simulate irrigation completion after duration
+              setTimeout(async () => {
+                setIsIrrigating(false);
+                
+                // Update irrigation log
+                await update(irrigationLogRef, {
+                  status: 'completed',
+                  endTime: new Date().toISOString()
+                });
+                
+                // Update farm status back
+                await update(farmRef, {
+                  status: 'healthy',
+                  updatedAt: new Date().toISOString()
+                });
+                
+                Alert.alert(
+                  "✅ Irrigation Completed",
+                  `Irrigation for ${selectedFarm.name} has been completed successfully.`
+                );
+                
+              }, duration * 1000); // Convert minutes to milliseconds for simulation
+              
             } catch (error) {
+              console.error('Error starting irrigation:', error);
               Alert.alert("Error", "Failed to start irrigation. Please check your connection.");
-            } finally {
-              setIsLoading(false);
+              setIsIrrigating(false);
             }
           },
         },
@@ -244,39 +418,7 @@ export default function ControlScreen() {
     }
   };
 
-  const handleAddFarm = () => {
-    triggerHaptic('impact');
-    setShowAddFarmModal(false);
-    
-    // Try to navigate to AddFarm screen
-    // If this doesn't work, check your navigation structure
-    try {
-      navigation.navigate('AddFarm');
-    } catch (error) {
-      console.error('Navigation error:', error);
-      // Fallback: Show message that Add Farm is not available
-      Alert.alert(
-        "Add Farm",
-        "The Add Farm screen is not available in the current navigation setup. Please use Quick Add or check your navigation configuration.",
-        [
-          { text: "OK", style: "default" },
-          {
-            text: "Use Quick Add",
-            onPress: handleQuickAddFarm
-          }
-        ]
-      );
-    }
-  };
-
-  const handleQuickAddFarm = () => {
-    setQuickFarmName("");
-    setQuickAddError("");
-    setShowAddFarmModal(false);
-    setTimeout(() => setShowQuickAddModal(true), 100);
-  };
-
-  const handleSubmitQuickAdd = async () => {
+  const handleQuickAddFarm = async () => {
     if (!quickFarmName.trim()) {
       setQuickAddError("Farm name is required");
       return;
@@ -285,40 +427,39 @@ export default function ControlScreen() {
     try {
       setIsLoading(true);
       
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Create a new farm object
-      const newField = {
-        id: `field-${Date.now()}`,
+      // Create new farm object
+      const newFarm: Omit<Farm, 'id'> = {
         name: quickFarmName.trim(),
         location: "Location to be added",
-        acres: 0,
-        cropType: "To be specified",
-        moisture: 0,
-        ph: 0,
-        temperature: 0,
-        nitrogen: 0,
-        phosphorus: 0,
-        potassium: 0,
-        status: "healthy" as const,
+        totalAcres: 0,
+        cropTypes: ["Other"],
+        soilType: "Other",
+        irrigationType: "Manual Irrigation",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: 'healthy'
       };
       
-      // Add the new field to our fields list
-      const updatedFields = [...fields, newField];
-      setFields(updatedFields);
+      // Save to Firebase Realtime Database
+      const farmsRef = ref(db, 'farms');
+      const newFarmRef = push(farmsRef);
+      await set(newFarmRef, newFarm);
       
-      // Update the selected field to the new one
-      setSelectedField(newField);
+      const newFarmWithId: Farm = {
+        id: newFarmRef.key!,
+        ...newFarm
+      };
+      
+      // Update local state
+      setFarms(prev => [...prev, newFarmWithId]);
+      setSelectedFarm(newFarmWithId);
       
       triggerHaptic('success');
-      
-      // Close the modal
       setShowQuickAddModal(false);
       
       Alert.alert(
         "✅ Farm Added Successfully",
-        `Farm "${quickFarmName}" has been added.\n\nPlease go to the Farms screen to add more details.`,
+        `Farm "${quickFarmName}" has been added.\n\nYou can now add more details in the Farms screen.`,
         [
           {
             text: "View Farms",
@@ -327,7 +468,6 @@ export default function ControlScreen() {
                 navigation.navigate('Farms');
               } catch (error) {
                 console.error('Navigation to Farms failed:', error);
-                Alert.alert("Info", "Farms screen is not available in current navigation.");
               }
             }
           },
@@ -338,21 +478,18 @@ export default function ControlScreen() {
                 navigation.navigate('AddFarm');
               } catch (error) {
                 console.error('Navigation to AddFarm failed:', error);
-                Alert.alert("Info", "Add Farm screen is not available in current navigation.");
               }
             }
           },
           {
             text: "OK",
             style: "default",
-            onPress: () => {
-              // Reset form
-              setQuickFarmName("");
-              setQuickAddError("");
-            }
           }
         ]
       );
+      
+      setQuickFarmName("");
+      setQuickAddError("");
       
     } catch (error) {
       console.error("Error adding farm:", error);
@@ -459,7 +596,10 @@ export default function ControlScreen() {
           
           <View style={styles.modalOptions}>
             <Pressable
-              onPress={handleQuickAddFarm}
+              onPress={() => {
+                setShowAddFarmModal(false);
+                setTimeout(() => setShowQuickAddModal(true), 100);
+              }}
               style={[
                 styles.modalOption,
                 { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }
@@ -478,7 +618,14 @@ export default function ControlScreen() {
             </Pressable>
             
             <Pressable
-              onPress={handleAddFarm}
+              onPress={() => {
+                setShowAddFarmModal(false);
+                try {
+                  navigation.navigate('AddFarm');
+                } catch (error) {
+                  Alert.alert("Navigation Error", "Please check your navigation setup.");
+                }
+              }}
               style={[
                 styles.modalOption,
                 { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }
@@ -568,7 +715,7 @@ export default function ControlScreen() {
             placeholder="e.g., North Field, Main Farm, etc."
             placeholderTextColor={theme.textSecondary}
             autoFocus
-            onSubmitEditing={handleSubmitQuickAdd}
+            onSubmitEditing={handleQuickAddFarm}
             editable={!isLoading}
           />
           
@@ -592,7 +739,7 @@ export default function ControlScreen() {
               Cancel
             </Button>
             <Button
-              onPress={handleSubmitQuickAdd}
+              onPress={handleQuickAddFarm}
               variant="primary"
               style={styles.modalButton}
               disabled={!quickFarmName.trim() || isLoading}
@@ -609,9 +756,9 @@ export default function ControlScreen() {
   if (isLoading && !showQuickAddModal) {
     return (
       <ThemedView style={styles.loadingContainer}>
-        <View style={[styles.loadingSpinner, { borderColor: theme.primary }]} />
+        <ActivityIndicator size="large" color={theme.primary} />
         <ThemedText style={[styles.loadingText, { color: theme.textSecondary }]}>
-          Loading irrigation controls...
+          Loading farms and settings...
         </ThemedText>
       </ThemedView>
     );
@@ -638,7 +785,7 @@ export default function ControlScreen() {
           <View style={styles.headerActions}>
             <Pressable
               onPress={() => setShowAddFarmModal(true)}
-              style={styles.addFarmButton}
+              style={[styles.addFarmButton, { backgroundColor: theme.backgroundSecondary }]}
             >
               <Feather name="plus" size={18} color={theme.primary} />
               <ThemedText style={[styles.addFarmText, { color: theme.primary }]}>
@@ -646,7 +793,7 @@ export default function ControlScreen() {
               </ThemedText>
             </Pressable>
             <Pressable
-              onPress={() => Alert.alert("Help", "Adjust irrigation settings for your fields.")}
+              onPress={() => Alert.alert("Help", "Adjust irrigation settings for your farms.")}
               style={styles.helpButton}
             >
               <Feather name="help-circle" size={20} color={theme.textSecondary} />
@@ -654,33 +801,33 @@ export default function ControlScreen() {
           </View>
         </View>
 
-        {/* Field Selection Section with No Fields State */}
+        {/* Farm Selection Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <ThemedText type="h4" style={styles.sectionTitle}>
-              Select Field
+              Select Farm
             </ThemedText>
             <ThemedText style={[styles.sectionSubtitle, { color: theme.textSecondary }]}>
-              Choose field to control
+              {farms.length} farm{farms.length !== 1 ? 's' : ''} available
             </ThemedText>
           </View>
           
-          {fields.length === 0 ? (
+          {farms.length === 0 ? (
             <Pressable
               onPress={() => setShowAddFarmModal(true)}
               style={[
-                styles.noFieldsCard,
+                styles.noFarmsCard,
                 { backgroundColor: theme.cardBackground, borderColor: theme.border },
                 Shadows.small,
               ]}
             >
-              <View style={styles.noFieldsContent}>
-                <View style={[styles.noFieldsIcon, { backgroundColor: `${theme.primary}15` }]}>
+              <View style={styles.noFarmsContent}>
+                <View style={[styles.noFarmsIcon, { backgroundColor: `${theme.primary}15` }]}>
                   <Feather name="map" size={28} color={theme.primary} />
                 </View>
-                <View style={styles.noFieldsText}>
-                  <ThemedText style={styles.noFieldsTitle}>No Farms Added</ThemedText>
-                  <ThemedText style={[styles.noFieldsDescription, { color: theme.textSecondary }]}>
+                <View style={styles.noFarmsText}>
+                  <ThemedText style={styles.noFarmsTitle}>No Farms Added</ThemedText>
+                  <ThemedText style={[styles.noFarmsDescription, { color: theme.textSecondary }]}>
                     Add your first farm to start controlling irrigation
                   </ThemedText>
                 </View>
@@ -691,77 +838,83 @@ export default function ControlScreen() {
             <>
               <Pressable
                 onPress={() => {
-                  setShowFieldPicker(!showFieldPicker);
+                  setShowFarmPicker(!showFarmPicker);
                   triggerHaptic('impact');
                 }}
                 style={[
-                  styles.fieldSelector,
+                  styles.farmSelector,
                   { backgroundColor: theme.cardBackground, borderColor: theme.border },
                   Shadows.small,
                 ]}
               >
-                <View style={styles.fieldInfo}>
-                  <View style={styles.fieldHeader}>
-                    <ThemedText style={styles.fieldName}>{selectedField.name}</ThemedText>
-                    <FieldStatusIndicator status={selectedField.status} />
+                <View style={styles.farmInfo}>
+                  <View style={styles.farmHeader}>
+                    <ThemedText style={styles.farmName}>
+                      {selectedFarm?.name || "Select a Farm"}
+                    </ThemedText>
+                    {selectedFarm && (
+                      <FieldStatusIndicator status={selectedFarm.status} />
+                    )}
                   </View>
-                  <View style={styles.fieldDetails}>
-                    <View style={styles.fieldDetail}>
-                      <Feather name="map" size={12} color={theme.textSecondary} />
-                      <ThemedText style={[styles.fieldDetailText, { color: theme.textSecondary }]}>
-                        {selectedField.acres} acres
-                      </ThemedText>
+                  {selectedFarm && (
+                    <View style={styles.farmDetails}>
+                      <View style={styles.farmDetail}>
+                        <Feather name="map" size={12} color={theme.textSecondary} />
+                        <ThemedText style={[styles.farmDetailText, { color: theme.textSecondary }]}>
+                          {selectedFarm.totalAcres} acres
+                        </ThemedText>
+                      </View>
+                      <View style={styles.farmDetail}>
+                        <Feather name="droplet" size={12} color={theme.textSecondary} />
+                        <ThemedText style={[styles.farmDetailText, { color: theme.textSecondary }]}>
+                          {realTimeSensorData.soilMoisture}% moisture
+                        </ThemedText>
+                      </View>
                     </View>
-                    <View style={styles.fieldDetail}>
-                      <Feather name="droplet" size={12} color={theme.textSecondary} />
-                      <ThemedText style={[styles.fieldDetailText, { color: theme.textSecondary }]}>
-                        {selectedField.moisture}% moisture
-                      </ThemedText>
-                    </View>
-                  </View>
+                  )}
                 </View>
                 <Feather
-                  name={showFieldPicker ? "chevron-up" : "chevron-down"}
+                  name={showFarmPicker ? "chevron-up" : "chevron-down"}
                   size={20}
                   color={theme.textSecondary}
                 />
               </Pressable>
 
-              {showFieldPicker && (
+              {showFarmPicker && (
                 <View
                   style={[
-                    styles.fieldList,
+                    styles.farmList,
                     { backgroundColor: theme.cardBackground, borderColor: theme.border },
                     Shadows.small,
                   ]}
                 >
-                  {fields.map((field) => (
+                  {farms.map((farm) => (
                     <Pressable
-                      key={field.id}
+                      key={farm.id}
                       onPress={() => {
-                        setSelectedField(field);
-                        setShowFieldPicker(false);
+                        setSelectedFarm(farm);
+                        setShowFarmPicker(false);
                         triggerHaptic('impact');
                       }}
                       style={[
-                        styles.fieldOption,
-                        field.id === selectedField.id && styles.fieldOptionSelected,
+                        styles.farmOption,
+                        farm.id === selectedFarm?.id && styles.farmOptionSelected,
                       ]}
                     >
-                      <View style={styles.fieldOptionContent}>
-                        <FieldStatusIndicator status={field.status} />
-                        <View style={styles.fieldOptionInfo}>
-                          <ThemedText style={styles.fieldOptionName}>{field.name}</ThemedText>
-                          <ThemedText style={[styles.fieldOptionDetails, { color: theme.textSecondary }]}>
-                            {field.cropType} • {field.acres} acres
+                      <View style={styles.farmOptionContent}>
+                        <FieldStatusIndicator status={farm.status} />
+                        <View style={styles.farmOptionInfo}>
+                          <ThemedText style={styles.farmOptionName}>{farm.name}</ThemedText>
+                          <ThemedText style={[styles.farmOptionDetails, { color: theme.textSecondary }]}>
+                            {farm.cropTypes[0]} • {farm.totalAcres} acres
                           </ThemedText>
                         </View>
                       </View>
-                      <View style={styles.fieldOptionRight}>
-                        <ThemedText style={[styles.fieldMoisture, { color: theme.textSecondary }]}>
-                          {field.moisture}%
+                      <View style={styles.farmOptionRight}>
+                        <ThemedText style={[styles.farmMoisture, { color: theme.textSecondary }]}>
+                          {farm.sensorData?.soilMoisture || 0}%
                         </ThemedText>
-                        {field.id === selectedField.id && (
+                        {farm.id === selectedFarm?.id && (
                           <Feather
                             name="check"
                             size={18}
@@ -772,19 +925,22 @@ export default function ControlScreen() {
                     </Pressable>
                   ))}
                   
-                  {/* Add New Field Option */}
+                  {/* Add New Farm Option */}
                   <Pressable
-                    onPress={() => setShowAddFarmModal(true)}
+                    onPress={() => {
+                      setShowFarmPicker(false);
+                      setShowAddFarmModal(true);
+                    }}
                     style={[
-                      styles.addNewFieldOption,
+                      styles.addNewFarmOption,
                       { borderTopColor: theme.border }
                     ]}
                   >
-                    <View style={styles.addNewFieldContent}>
-                      <View style={[styles.addNewFieldIcon, { backgroundColor: `${theme.primary}15` }]}>
+                    <View style={styles.addNewFarmContent}>
+                      <View style={[styles.addNewFarmIcon, { backgroundColor: `${theme.primary}15` }]}>
                         <Feather name="plus" size={16} color={theme.primary} />
                       </View>
-                      <ThemedText style={[styles.addNewFieldText, { color: theme.primary }]}>
+                      <ThemedText style={[styles.addNewFarmText, { color: theme.primary }]}>
                         Add New Farm
                       </ThemedText>
                     </View>
@@ -796,220 +952,220 @@ export default function ControlScreen() {
           )}
         </View>
 
-        {/* Irrigation Mode Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
+        {/* Real-time Sensor Data Display */}
+        {selectedFarm && (
+          <View style={styles.section}>
             <ThemedText type="h4" style={styles.sectionTitle}>
-              Irrigation Mode
+              Real-time Sensor Data
             </ThemedText>
-            <View style={styles.modeBadge}>
-              <ThemedText style={[
-                styles.modeBadgeText,
-                { color: autoMode ? theme.success : theme.warning }
-              ]}>
-                {autoMode ? "AI OPTIMIZED" : "MANUAL"}
-              </ThemedText>
-            </View>
-          </View>
-          
-          <View style={[
-            styles.modeCard,
-            { backgroundColor: theme.cardBackground, borderColor: theme.border },
-            Shadows.small,
-          ]}>
-            <View style={styles.modeContent}>
-              <View style={styles.modeInfo}>
-                <Feather 
-                  name={autoMode ? "cpu" : "sliders"} 
-                  size={24} 
-                  color={autoMode ? theme.success : theme.warning} 
-                />
-                <View style={styles.modeText}>
-                  <ThemedText style={styles.modeTitle}>
-                    {autoMode ? "AI-Optimized Mode" : "Manual Control"}
+            <View style={[
+              styles.sensorCard,
+              { backgroundColor: theme.cardBackground, borderColor: theme.border },
+              Shadows.small,
+            ]}>
+              <View style={styles.sensorRow}>
+                <View style={styles.sensorItem}>
+                  <View style={[styles.sensorIcon, { backgroundColor: `${theme.accent}15` }]}>
+                    <Feather name="droplet" size={20} color={theme.accent} />
+                  </View>
+                  <ThemedText style={styles.sensorValue}>
+                    {realTimeSensorData.soilMoisture}%
                   </ThemedText>
-                  <ThemedText style={[styles.modeDescription, { color: theme.textSecondary }]}>
-                    {autoMode 
-                      ? "AI automatically adjusts based on weather and soil data" 
-                      : "You control all irrigation settings manually"}
+                  <ThemedText style={[styles.sensorLabel, { color: theme.textSecondary }]}>
+                    Soil Moisture
+                  </ThemedText>
+                </View>
+                <View style={styles.sensorItem}>
+                  <View style={[styles.sensorIcon, { backgroundColor: `${theme.primary}15` }]}>
+                    <Feather name="activity" size={20} color={theme.primary} />
+                  </View>
+                  <ThemedText style={styles.sensorValue}>
+                    {realTimeSensorData.pH}
+                  </ThemedText>
+                  <ThemedText style={[styles.sensorLabel, { color: theme.textSecondary }]}>
+                    pH Level
+                  </ThemedText>
+                </View>
+                <View style={styles.sensorItem}>
+                  <View style={[styles.sensorIcon, { backgroundColor: `${theme.warning}15` }]}>
+                    <Feather name="thermometer" size={20} color={theme.warning} />
+                  </View>
+                  <ThemedText style={styles.sensorValue}>
+                    {realTimeSensorData.temperature}°C
+                  </ThemedText>
+                  <ThemedText style={[styles.sensorLabel, { color: theme.textSecondary }]}>
+                    Temperature
                   </ThemedText>
                 </View>
               </View>
-              
-              <Switch
-                value={autoMode}
-                onValueChange={handleToggleMode}
-                trackColor={{
-                  false: theme.backgroundTertiary,
-                  true: theme.primary,
-                }}
-                thumbColor="#FFFFFF"
-                ios_backgroundColor={theme.backgroundTertiary}
-              />
+              <ThemedText style={[styles.sensorNote, { color: theme.textSecondary }]}>
+                Data updates in real-time from your sensors
+              </ThemedText>
             </View>
           </View>
-        </View>
+        )}
+
+        {/* Irrigation Mode Section */}
+        {selectedFarm && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <ThemedText type="h4" style={styles.sectionTitle}>
+                Irrigation Mode
+              </ThemedText>
+              <View style={styles.modeBadge}>
+                <ThemedText style={[
+                  styles.modeBadgeText,
+                  { color: autoMode ? theme.success : theme.warning }
+                ]}>
+                  {autoMode ? "AI OPTIMIZED" : "MANUAL"}
+                </ThemedText>
+              </View>
+            </View>
+            
+            <View style={[
+              styles.modeCard,
+              { backgroundColor: theme.cardBackground, borderColor: theme.border },
+              Shadows.small,
+            ]}>
+              <View style={styles.modeContent}>
+                <View style={styles.modeInfo}>
+                  <Feather 
+                    name={autoMode ? "cpu" : "sliders"} 
+                    size={24} 
+                    color={autoMode ? theme.success : theme.warning} 
+                  />
+                  <View style={styles.modeText}>
+                    <ThemedText style={styles.modeTitle}>
+                      {autoMode ? "AI-Optimized Mode" : "Manual Control"}
+                    </ThemedText>
+                    <ThemedText style={[styles.modeDescription, { color: theme.textSecondary }]}>
+                      {autoMode 
+                        ? "AI automatically adjusts based on weather and soil data" 
+                        : "You control all irrigation settings manually"}
+                    </ThemedText>
+                  </View>
+                </View>
+                
+                <Switch
+                  value={autoMode}
+                  onValueChange={handleToggleMode}
+                  trackColor={{
+                    false: theme.backgroundTertiary,
+                    true: theme.primary,
+                  }}
+                  thumbColor="#FFFFFF"
+                  ios_backgroundColor={theme.backgroundTertiary}
+                  disabled={!selectedFarm}
+                />
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Schedule Time Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <ThemedText type="h4" style={styles.sectionTitle}>
-              Schedule Time
-            </ThemedText>
-            <Pressable
-              onPress={() => setShowTimePicker(true)}
-              style={styles.customTimeButton}
-            >
-              <Feather name="clock" size={14} color={theme.textSecondary} />
-              <ThemedText style={[styles.customTimeText, { color: theme.textSecondary }]}>
-                Custom
+        {selectedFarm && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <ThemedText type="h4" style={styles.sectionTitle}>
+                Schedule Time
               </ThemedText>
-            </Pressable>
+              <Pressable
+                onPress={() => setShowTimePicker(true)}
+                style={styles.customTimeButton}
+              >
+                <Feather name="clock" size={14} color={theme.textSecondary} />
+                <ThemedText style={[styles.customTimeText, { color: theme.textSecondary }]}>
+                  Custom
+                </ThemedText>
+              </Pressable>
+            </View>
+            
+            <View style={styles.timeGrid}>
+              {["05:00", "06:00", "07:00", "18:00", "19:00", "20:00"].map((time) => (
+                <TimeButton key={time} time={time} selected={scheduleTime === time} />
+              ))}
+            </View>
           </View>
-          
-          <View style={styles.timeGrid}>
-            {["05:00", "06:00", "07:00", "18:00", "19:00", "20:00"].map((time) => (
-              <TimeButton key={time} time={time} selected={scheduleTime === time} />
-            ))}
-          </View>
-        </View>
+        )}
 
         {/* Duration Section */}
-        <View style={styles.section}>
-          <ThemedText type="h4" style={styles.sectionTitle}>
-            Duration
-          </ThemedText>
-          <View style={styles.durationGrid}>
-            {[15, 30, 45, 60, 90].map((mins) => (
-              <DurationButton key={mins} mins={mins} selected={duration === mins} />
-            ))}
+        {selectedFarm && (
+          <View style={styles.section}>
+            <ThemedText type="h4" style={styles.sectionTitle}>
+              Duration
+            </ThemedText>
+            <View style={styles.durationGrid}>
+              {[15, 30, 45, 60, 90].map((mins) => (
+                <DurationButton key={mins} mins={mins} selected={duration === mins} />
+              ))}
+            </View>
+            <ThemedText style={[styles.durationHint, { color: theme.textSecondary }]}>
+              Estimated water usage: ~{Math.round(duration * 100)} liters
+            </ThemedText>
           </View>
-          <ThemedText style={[styles.durationHint, { color: theme.textSecondary }]}>
-            Estimated water usage: ~{Math.round(duration * 100)} liters
-          </ThemedText>
-        </View>
+        )}
 
         {/* Status Card */}
-        <View style={styles.section}>
-          <View style={[
-            styles.statusCard,
-            { backgroundColor: theme.cardBackground, borderColor: theme.border },
-            Shadows.small,
-          ]}>
-            <View style={styles.statusIcon}>
-              <Feather
-                name="clock"
-                size={28}
-                color={theme.primary}
-              />
-            </View>
-            <View style={styles.statusInfo}>
-              <ThemedText style={[styles.statusLabel, { color: theme.textSecondary }]}>
-                Next Scheduled Irrigation
-              </ThemedText>
-              <ThemedText type="h3">{nextIrrigationTime}</ThemedText>
-              <ThemedText style={[styles.statusField, { color: theme.textSecondary }]}>
-                for {selectedField.name}
-              </ThemedText>
-            </View>
-          </View>
-        </View>
-
-        {/* Recent Logs */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <ThemedText type="h4" style={styles.sectionTitle}>
-              Recent Irrigation Logs
-            </ThemedText>
-            <Pressable onPress={() => Alert.alert("View All", "Feature coming soon")}>
-              <ThemedText style={[styles.viewAllText, { color: theme.link }]}>
-                View All
-              </ThemedText>
-            </Pressable>
-          </View>
-          
-          <View style={[
-            styles.logsCard,
-            { backgroundColor: theme.cardBackground, borderColor: theme.border },
-            Shadows.small,
-          ]}>
-            {mockIrrigationLogs.slice(0, 3).map((log, index) => (
-              <View
-                key={log.id}
-                style={[
-                  styles.logRow,
-                  index < 2 && { borderBottomColor: theme.border, borderBottomWidth: 1 },
-                ]}
-              >
-                <View style={styles.logLeft}>
-                  <View style={styles.logHeader}>
-                    <ThemedText style={styles.logField}>{log.fieldName}</ThemedText>
-                    <View style={[
-                      styles.logModeBadge,
-                      { 
-                        backgroundColor: log.mode === 'auto' 
-                          ? `${theme.success}15` 
-                          : `${theme.warning}15` 
-                      }
-                    ]}>
-                      <ThemedText style={[
-                        styles.logModeText,
-                        { 
-                          color: log.mode === 'auto' 
-                            ? theme.success 
-                            : theme.warning 
-                        }
-                      ]}>
-                        {log.mode.charAt(0).toUpperCase() + log.mode.slice(1)}
-                      </ThemedText>
-                    </View>
-                  </View>
-                  <ThemedText style={[styles.logTime, { color: theme.textSecondary }]}>
-                    <Feather name="clock" size={10} /> {log.timestamp}
-                  </ThemedText>
-                </View>
-                <View style={styles.logRight}>
-                  <ThemedText style={styles.logVolume}>{log.volume.toLocaleString()}L</ThemedText>
-                  <ThemedText style={[styles.logDuration, { color: theme.textSecondary }]}>
-                    {log.duration} min
-                  </ThemedText>
-                </View>
+        {selectedFarm && (
+          <View style={styles.section}>
+            <View style={[
+              styles.statusCard,
+              { backgroundColor: theme.cardBackground, borderColor: theme.border },
+              Shadows.small,
+            ]}>
+              <View style={styles.statusIcon}>
+                <Feather
+                  name={isIrrigating ? "play-circle" : "clock"}
+                  size={28}
+                  color={isIrrigating ? theme.success : theme.primary}
+                />
               </View>
-            ))}
+              <View style={styles.statusInfo}>
+                <ThemedText style={[styles.statusLabel, { color: theme.textSecondary }]}>
+                  {isIrrigating ? "Currently Irrigating" : "Next Scheduled Irrigation"}
+                </ThemedText>
+                <ThemedText type="h3">{nextIrrigationTime}</ThemedText>
+                <ThemedText style={[styles.statusField, { color: theme.textSecondary }]}>
+                  for {selectedFarm.name}
+                </ThemedText>
+              </View>
+            </View>
           </View>
-        </View>
+        )}
+
       </ScrollView>
 
       {/* Floating Action Buttons */}
-      <View
-        style={[
-          styles.floatingActions,
-          {
-            backgroundColor: theme.backgroundRoot,
-            borderTopColor: theme.border,
-          },
-        ]}
-      >
-        <Button
-          onPress={handleStartNow}
-          variant="outline"
-          icon="play"
-          style={styles.secondaryButton}
-          disabled={isLoading}
+      {selectedFarm && (
+        <View
+          style={[
+            styles.floatingActions,
+            {
+              backgroundColor: theme.backgroundRoot,
+              borderTopColor: theme.border,
+            },
+          ]}
         >
-          Start Now
-        </Button>
-        <Button
-          onPress={handleSaveSchedule}
-          variant="primary"
-          icon="save"
-          style={styles.primaryButton}
-          loading={isLoading}
-          disabled={isLoading}
-        >
-          Save Schedule
-        </Button>
-      </View>
+          <Button
+            onPress={handleStartNow}
+            variant="outline"
+            icon={isIrrigating ? "pause" : "play"}
+            style={styles.secondaryButton}
+            disabled={isIrrigating}
+          >
+            {isIrrigating ? "Stop" : "Start Now"}
+          </Button>
+          <Button
+            onPress={handleSaveSchedule}
+            variant="primary"
+            icon="save"
+            style={styles.primaryButton}
+            disabled={isIrrigating}
+          >
+            Save Schedule
+          </Button>
+        </View>
+      )}
 
       {/* Custom Time Picker Modal */}
       <Modal
@@ -1096,17 +1252,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  loadingSpinner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 3,
-    borderTopColor: 'transparent',
-    marginBottom: Spacing.lg,
+    padding: Spacing.xl,
   },
   loadingText: {
     fontSize: 14,
+    marginTop: Spacing.lg,
   },
   header: {
     flexDirection: 'row',
@@ -1129,7 +1279,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     borderRadius: BorderRadius.md,
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
   },
   addFarmText: {
     fontSize: 13,
@@ -1153,36 +1302,36 @@ const styles = StyleSheet.create({
   sectionSubtitle: {
     fontSize: 13,
   },
-  noFieldsCard: {
+  noFarmsCard: {
     padding: Spacing.lg,
     borderRadius: BorderRadius.lg,
     borderWidth: 1,
     borderStyle: 'dashed',
   },
-  noFieldsContent: {
+  noFarmsContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
   },
-  noFieldsIcon: {
+  noFarmsIcon: {
     width: 56,
     height: 56,
     borderRadius: BorderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  noFieldsText: {
+  noFarmsText: {
     flex: 1,
   },
-  noFieldsTitle: {
+  noFarmsTitle: {
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 4,
   },
-  noFieldsDescription: {
+  noFarmsDescription: {
     fontSize: 13,
   },
-  fieldSelector: {
+  farmSelector: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -1190,94 +1339,94 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.lg,
     borderWidth: 1,
   },
-  fieldInfo: {
+  farmInfo: {
     flex: 1,
   },
-  fieldHeader: {
+  farmHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
     marginBottom: Spacing.xs,
   },
-  fieldName: {
+  farmName: {
     fontSize: 16,
     fontWeight: '600',
   },
-  fieldDetails: {
+  farmDetails: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
   },
-  fieldDetail: {
+  farmDetail: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.xs,
   },
-  fieldDetailText: {
+  farmDetailText: {
     fontSize: 12,
   },
-  fieldList: {
+  farmList: {
     marginTop: Spacing.sm,
     borderRadius: BorderRadius.lg,
     borderWidth: 1,
     overflow: 'hidden',
   },
-  fieldOption: {
+  farmOption: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: Spacing.md,
   },
-  fieldOptionSelected: {
+  farmOptionSelected: {
     backgroundColor: 'rgba(0, 0, 0, 0.05)',
   },
-  fieldOptionContent: {
+  farmOptionContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
     flex: 1,
   },
-  fieldOptionInfo: {
+  farmOptionInfo: {
     flex: 1,
   },
-  fieldOptionName: {
+  farmOptionName: {
     fontSize: 14,
     fontWeight: '500',
     marginBottom: 2,
   },
-  fieldOptionDetails: {
+  farmOptionDetails: {
     fontSize: 12,
   },
-  fieldOptionRight: {
+  farmOptionRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
   },
-  fieldMoisture: {
+  farmMoisture: {
     fontSize: 13,
     fontWeight: '600',
   },
-  addNewFieldOption: {
+  addNewFarmOption: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: Spacing.md,
     borderTopWidth: 1,
   },
-  addNewFieldContent: {
+  addNewFarmContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
     flex: 1,
   },
-  addNewFieldIcon: {
+  addNewFarmIcon: {
     width: 32,
     height: 32,
     borderRadius: BorderRadius.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addNewFieldText: {
+  addNewFarmText: {
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1285,6 +1434,41 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  sensorCard: {
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    padding: Spacing.lg,
+  },
+  sensorRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  sensorItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  sensorIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.sm,
+  },
+  sensorValue: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  sensorLabel: {
+    fontSize: 12,
+  },
+  sensorNote: {
+    fontSize: 11,
+    textAlign: 'center',
+    marginTop: Spacing.sm,
   },
   modeBadge: {
     paddingHorizontal: Spacing.sm,
@@ -1422,56 +1606,6 @@ const styles = StyleSheet.create({
   statusField: {
     fontSize: 13,
     marginTop: 2,
-  },
-  viewAllText: {
-    fontSize: 13,
-  },
-  logsCard: {
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    overflow: 'hidden',
-  },
-  logRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: Spacing.lg,
-  },
-  logLeft: {
-    flex: 1,
-  },
-  logHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    marginBottom: 4,
-  },
-  logField: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  logModeBadge: {
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    borderRadius: BorderRadius.xs,
-  },
-  logModeText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  logTime: {
-    fontSize: 12,
-  },
-  logRight: {
-    alignItems: 'flex-end',
-  },
-  logVolume: {
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  logDuration: {
-    fontSize: 11,
   },
   floatingActions: {
     position: 'absolute',
