@@ -1,7 +1,7 @@
 import { Groq } from 'groq-sdk';
 
 // Your actual Groq API key
-const GROQ_API_KEY = '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';
+const GROQ_API_KEY = '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';
 
 // Validate API key format
 if (!GROQ_API_KEY || GROQ_API_KEY.trim() === '' || !GROQ_API_KEY.startsWith('gsk_')) {
