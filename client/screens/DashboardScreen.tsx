@@ -22,9 +22,11 @@ import { HeaderTitle } from "@/components/HeaderTitle";
 import { useTheme } from "@/hooks/useTheme";
 import { useChat } from "@/contexts/ChatContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { Spacing, BorderRadius } from "@/constants/theme";
+import { useWeather } from "@/contexts/WeatherContext";
+import { Spacing, BorderRadius, Shadows } from "@/constants/theme";
 import { subscribeToAlerts, Alert as AlertType } from "@/services/notifications/firebaseNotifications";
 import type { RootStackParamList } from "@/navigation/RootStackNavigator";
+import { getWeatherIconName } from "@/services/weatherService";
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -39,6 +41,20 @@ const extractSensorData = (data: any) => {
   };
 };
 
+// Helper function to get day name
+const getDayName = (dateString: string): string => {
+  const date = new Date(dateString);
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === tomorrow.toDateString()) return "Tomorrow";
+  
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return days[date.getDay()];
+};
+
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
@@ -47,6 +63,12 @@ export default function DashboardScreen() {
   const { theme, isDark } = useTheme();
   const { openChat } = useChat();
   const { user } = useAuth();
+  const { 
+    weatherData, 
+    loading: weatherLoading, 
+    error: weatherError, 
+    refreshWeather 
+  } = useWeather();
   
   const [unreadCount, setUnreadCount] = useState(0);
   const [totalAlerts, setTotalAlerts] = useState(0);
@@ -64,15 +86,6 @@ export default function DashboardScreen() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [weatherForecast, setWeatherForecast] = useState([
-    { day: "Today", condition: "sunny", temp: 28, rain: 10 },
-    { day: "Tue", condition: "cloudy", temp: 26, rain: 20 },
-    { day: "Wed", condition: "rain", temp: 22, rain: 80 },
-    { day: "Thu", condition: "cloudy", temp: 24, rain: 30 },
-    { day: "Fri", condition: "sunny", temp: 27, rain: 0 },
-    { day: "Sat", condition: "wind", temp: 25, rain: 10 },
-    { day: "Sun", condition: "sunny", temp: 29, rain: 5 },
-  ]);
   const [unsubscribe, setUnsubscribe] = useState<() => void>(() => () => {});
 
   // Initialize Firebase
@@ -160,16 +173,15 @@ export default function DashboardScreen() {
         });
       }
       
-      // Calculate overall statistics
+      // Calculate overall statistics with updated formulas
       const averageMoisture = farmCount > 0 ? Math.round(totalMoisture / farmCount) : 0;
       const averagePH = farmCount > 0 ? parseFloat((totalPH / farmCount).toFixed(1)) : 0;
       const soilHealthScore = calculateSoilHealthScore(averageMoisture, averagePH);
       
-      // Calculate water savings based on moisture levels
-      // (Higher moisture = less need for irrigation = more water saved)
+      // Calculate water savings based on moisture levels - UPDATED FORMULA
       const waterSavingsPercentage = calculateWaterSavings(farmsArray);
       
-      // Calculate yield improvement based on soil health
+      // Calculate yield improvement based on soil health - UPDATED FORMULA
       const yieldImprovement = calculateYieldImprovement(soilHealthScore);
       
       // Calculate CO2 reduction based on water savings
@@ -198,29 +210,52 @@ export default function DashboardScreen() {
     }
   };
 
-  // Helper functions for calculations
+  // UPDATED: Soil Health Score Calculation
   const calculateSoilHealthScore = (moisture: number, ph: number): number => {
-    // Score based on moisture (optimal: 40-60%) and pH (optimal: 6-7)
     let score = 0;
     
-    // Moisture score (max 50 points)
-    if (moisture >= 40 && moisture <= 60) {
-      score += 50; // Optimal range
-    } else if (moisture >= 30 && moisture <= 70) {
-      score += 30; // Acceptable range
-    } else if (moisture >= 20 && moisture <= 80) {
-      score += 15; // Marginal range
+    // Moisture Score (max 50 points) - More granular
+    if (moisture >= 45 && moisture <= 55) {
+      score += 50; // Perfect center
+    } else if (moisture >= 40 && moisture < 45) {
+      score += 45; // Near perfect low
+    } else if (moisture > 55 && moisture <= 60) {
+      score += 45; // Near perfect high
+    } else if (moisture >= 35 && moisture < 40) {
+      score += 35; // Good low
+    } else if (moisture > 60 && moisture <= 65) {
+      score += 35; // Good high
+    } else if (moisture >= 30 && moisture < 35) {
+      score += 25; // Acceptable low
+    } else if (moisture > 65 && moisture <= 70) {
+      score += 25; // Acceptable high
+    } else if (moisture >= 20 && moisture < 30) {
+      score += 15; // Marginal low
+    } else if (moisture > 70 && moisture <= 80) {
+      score += 15; // Marginal high
     } else {
       score += 5; // Poor
     }
     
-    // pH score (max 50 points)
-    if (ph >= 6 && ph <= 7) {
-      score += 50; // Optimal for most crops
-    } else if (ph >= 5.5 && ph <= 7.5) {
-      score += 30; // Acceptable
-    } else if (ph >= 5 && ph <= 8) {
-      score += 15; // Marginal
+    // pH Score (max 50 points) - More granular
+    if (ph >= 6.3 && ph <= 6.7) {
+      score += 50; // Optimal center
+    } else if (ph >= 6.0 && ph < 6.3) {
+      score += 45; // Near optimal low
+    } else if (ph > 6.7 && ph <= 7.0) {
+      score += 45; // Near optimal high
+    } else if (ph >= 5.7 && ph < 6.0) {
+      score += 35; // Good low
+    } else if (ph > 7.0 && ph <= 7.3) {
+      score += 35; // Good high
+    } else if (ph >= 5.5 && ph < 5.7) {
+      score += 25; // Acceptable low
+    } else if (ph > 7.3 && ph <= 7.5) {
+      score += 25; // Acceptable high
+    } else if (ph >= 5.0 && ph < 5.5) {
+      score += 15; // Marginal low
+    } else if (ph > 7.5 && ph <= 8.0) {
+      score += 15; // Marginal high
     } else {
       score += 5; // Poor
     }
@@ -228,21 +263,47 @@ export default function DashboardScreen() {
     return Math.min(score, 100);
   };
 
+  // UPDATED: Water Savings Calculation
   const calculateWaterSavings = (farms: any[]): number => {
     if (farms.length === 0) return 0;
     
-    // Calculate based on how many farms have optimal moisture (40-60%)
-    // This reduces need for irrigation
-    const optimalFarms = farms.filter(farm => farm.moisture >= 40 && farm.moisture <= 60).length;
-    const savingsPercentage = (optimalFarms / farms.length) * 40; // Max 25% savings
+    let totalMoistureEfficiency = 0;
+    farms.forEach(farm => {
+      const moisture = farm.moisture;
+      
+      // Calculate moisture efficiency percentage
+      if (moisture >= 45 && moisture <= 55) {
+        totalMoistureEfficiency += 100; // Perfect: 100% efficiency
+      } else if (moisture >= 40 && moisture < 45) {
+        totalMoistureEfficiency += 90; // Near perfect low: 90% efficiency
+      } else if (moisture > 55 && moisture <= 60) {
+        totalMoistureEfficiency += 90; // Near perfect high: 90% efficiency
+      } else if (moisture >= 35 && moisture < 40) {
+        totalMoistureEfficiency += 70; // Good low: 70% efficiency
+      } else if (moisture > 60 && moisture <= 65) {
+        totalMoistureEfficiency += 70; // Good high: 70% efficiency
+      } else if (moisture >= 30 && moisture < 35) {
+        totalMoistureEfficiency += 50; // Acceptable low: 50% efficiency
+      } else if (moisture > 65 && moisture <= 70) {
+        totalMoistureEfficiency += 50; // Acceptable high: 50% efficiency
+      } else if (moisture >= 20 && moisture < 30) {
+        totalMoistureEfficiency += 30; // Marginal low: 30% efficiency
+      } else if (moisture > 70 && moisture <= 80) {
+        totalMoistureEfficiency += 30; // Marginal high: 30% efficiency
+      } else {
+        totalMoistureEfficiency += 10; // Poor: 10% efficiency
+      }
+    });
     
-    return Math.round(savingsPercentage);
+    const averageEfficiency = totalMoistureEfficiency / farms.length;
+    // Convert to water savings percentage (max 40%)
+    return parseFloat((averageEfficiency / 100 * 40).toFixed(1));
   };
 
+  // UPDATED: Yield Improvement Calculation
   const calculateYieldImprovement = (soilHealthScore: number): number => {
-    // Yield improvement correlates with soil health
-    // Perfect soil health (100) = 20% improvement
-    return Math.round((soilHealthScore / 100) * 25);
+    // Scale: 0-100 score = 0-25% improvement
+    return parseFloat((soilHealthScore / 100 * 25).toFixed(1));
   };
 
   useEffect(() => {
@@ -287,23 +348,6 @@ export default function DashboardScreen() {
     loadAllData();
   };
 
-  const getWeatherIcon = (condition: string): keyof typeof Feather.glyphMap => {
-    switch (condition) {
-      case "sunny":
-        return "sun";
-      case "cloudy":
-        return "cloud";
-      case "rain":
-        return "cloud-rain";
-      case "storm":
-        return "cloud-lightning";
-      case "wind":
-        return "wind";
-      default:
-        return "sun";
-    }
-  };
-
   const handleAIChatPress = () => {
     openChat();
     navigation.navigate("Chat");
@@ -323,7 +367,11 @@ export default function DashboardScreen() {
         Alert.alert("Soil Analysis", "Opening soil analysis...");
         break;
       case "weather":
-        Alert.alert("Weather", "Checking detailed weather forecast...");
+        if (weatherData) {
+          navigation.navigate("WeatherDetails");
+        } else {
+          Alert.alert("Weather", "Weather data not available. Please try refreshing.");
+        }
         break;
       case "ai":
         handleAIChatPress();
@@ -457,6 +505,7 @@ export default function DashboardScreen() {
             style={[
               styles.loginRequiredCard,
               { backgroundColor: theme.cardBackground, borderColor: theme.border },
+              Shadows.small,
             ]}
           >
             <View style={styles.loginRequiredContent}>
@@ -487,7 +536,8 @@ export default function DashboardScreen() {
                   : recentAlert.type === 'warning'
                     ? theme.warning
                     : theme.border,
-              }
+              },
+              Shadows.small,
             ]}
             onPress={() => navigation.navigate("Notifications")}
           >
@@ -536,7 +586,8 @@ export default function DashboardScreen() {
             { 
               backgroundColor: theme.primary,
               borderColor: theme.primaryVariant || theme.primary,
-            }
+            },
+            Shadows.small,
           ]}
           onPress={handleAIChatPress}
         >
@@ -621,6 +672,7 @@ export default function DashboardScreen() {
                   style={[
                     styles.noFarmsKPICard,
                     { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                    Shadows.small,
                   ]}
                 >
                   <View style={styles.noFarmsKPIContent}>
@@ -697,6 +749,7 @@ export default function DashboardScreen() {
                   style={[
                     styles.impactCard,
                     { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                    Shadows.small,
                   ]}
                 >
                   <View style={styles.impactRow}>
@@ -746,74 +799,176 @@ export default function DashboardScreen() {
               </View>
             )}
 
+            {/* REAL WEATHER FORECAST SECTION */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <ThemedText type="h3" style={styles.sectionTitle}>
-                  7-Day Weather Forecast
+                  {weatherData?.location ? `Weather in ${weatherData.location}` : 'Weather Forecast'}
                 </ThemedText>
-                <Pressable onPress={() => handleQuickAction("weather")}>
-                  <ThemedText type="link" style={{ color: theme.link }}>
-                    Detailed Forecast
-                  </ThemedText>
-                </Pressable>
-              </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.weatherScroll}
-              >
-                {weatherForecast.map((day, index) => (
-                  <View
-                    key={index}
-                    style={[
-                      styles.weatherCard,
-                      { backgroundColor: theme.cardBackground, borderColor: theme.border },
-                      index === 0 && {
-                        backgroundColor: theme.primary,
-                        borderColor: "transparent",
-                      },
-                    ]}
+                <View style={styles.weatherHeaderActions}>
+                  {weatherData?.lastUpdated && (
+                    <ThemedText style={[styles.weatherUpdatedText, { color: theme.textSecondary }]}>
+                      Updated: {new Date(weatherData.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </ThemedText>
+                  )}
+                  <Pressable 
+                    onPress={refreshWeather}
+                    disabled={weatherLoading}
+                    style={styles.refreshWeatherButton}
                   >
-                    <ThemedText
-                      style={[
-                        styles.weatherDay,
-                        { color: index === 0 ? "#FFFFFF" : theme.textSecondary },
-                      ]}
-                    >
-                      {day.day}
-                    </ThemedText>
-                    <Feather
-                      name={getWeatherIcon(day.condition)}
-                      size={24}
-                      color={index === 0 ? "#FFFFFF" : theme.text}
+                    <Feather 
+                      name="refresh-cw" 
+                      size={16} 
+                      color={weatherLoading ? theme.textSecondary : theme.primary} 
                     />
-                    <ThemedText
-                      style={[styles.weatherTemp, index === 0 && { color: "#FFFFFF" }]}
-                    >
-                      {day.temp}°
+                  </Pressable>
+                  <Pressable onPress={() => navigation.navigate("WeatherDetails")}>
+                    <ThemedText type="link" style={{ color: theme.link, fontSize: 13 }}>
+                      Details
                     </ThemedText>
-                    {day.rain > 0 && (
-                      <View style={styles.rainRow}>
-                        <Feather
-                          name="droplet"
-                          size={10}
-                          color={index === 0 ? "#FFFFFF" : theme.accent}
-                        />
-                        <ThemedText
-                          style={[
-                            styles.rainText,
-                            {
-                              color: index === 0 ? "#FFFFFF" : theme.accent,
-                            },
-                          ]}
-                        >
-                          {day.rain}%
+                  </Pressable>
+                </View>
+              </View>
+              
+              {weatherError ? (
+                <View style={[styles.weatherErrorCard, { backgroundColor: `${theme.critical}15`, borderColor: theme.critical }]}>
+                  <Feather name="alert-triangle" size={20} color={theme.critical} />
+                  <ThemedText style={[styles.weatherErrorText, { color: theme.critical }]}>
+                    {weatherError}
+                  </ThemedText>
+                  <Pressable onPress={refreshWeather} style={styles.weatherRetryButton}>
+                    <ThemedText style={{ color: theme.critical, fontSize: 12, fontWeight: '600' }}>
+                      Retry
+                    </ThemedText>
+                  </Pressable>
+                </View>
+              ) : weatherLoading ? (
+                <View style={[styles.weatherLoadingCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+                  <ActivityIndicator size="small" color={theme.primary} />
+                  <ThemedText style={[styles.weatherLoadingText, { color: theme.textSecondary }]}>
+                    Loading weather data...
+                  </ThemedText>
+                </View>
+              ) : weatherData ? (
+                <>
+                  {/* Current Weather */}
+                  <View style={[styles.currentWeatherCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }, Shadows.small]}>
+                    <View style={styles.currentWeatherMain}>
+                      <View style={styles.currentWeatherTemp}>
+                        <ThemedText type="h1">{weatherData.current.temp}°</ThemedText>
+                        <ThemedText style={[styles.currentWeatherCondition, { color: theme.textSecondary }]}>
+                          {weatherData.current.condition.charAt(0).toUpperCase() + weatherData.current.condition.slice(1)}
                         </ThemedText>
                       </View>
-                    )}
+                      <Feather 
+                        name={getWeatherIconName(weatherData.current.condition)} 
+                        size={48} 
+                        color={theme.primary} 
+                      />
+                    </View>
+                    <View style={styles.currentWeatherDetails}>
+                      <View style={styles.weatherDetailItem}>
+                        <Feather name="droplet" size={14} color={theme.accent} />
+                        <ThemedText style={[styles.weatherDetailText, { color: theme.textSecondary }]}>
+                          {weatherData.current.precipitation}mm
+                        </ThemedText>
+                      </View>
+                      <View style={styles.weatherDetailItem}>
+                        <Feather name="wind" size={14} color={theme.accent} />
+                        <ThemedText style={[styles.weatherDetailText, { color: theme.textSecondary }]}>
+                          {weatherData.current.windSpeed} km/h
+                        </ThemedText>
+                      </View>
+                      <View style={styles.weatherDetailItem}>
+                        <Feather name="thermometer" size={14} color={theme.accent} />
+                        <ThemedText style={[styles.weatherDetailText, { color: theme.textSecondary }]}>
+                          Feels like {weatherData.current.feelsLike}°
+                        </ThemedText>
+                      </View>
+                      <View style={styles.weatherDetailItem}>
+                        <Feather name="cloud" size={14} color={theme.accent} />
+                        <ThemedText style={[styles.weatherDetailText, { color: theme.textSecondary }]}>
+                          {weatherData.current.humidity}% humidity
+                        </ThemedText>
+                      </View>
+                    </View>
                   </View>
-                ))}
-              </ScrollView>
+                  
+                  {/* 7-Day Forecast */}
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.weatherScroll}
+                  >
+                    {weatherData.forecast.slice(0, 7).map((day, index) => (
+                      <View
+                        key={day.date}
+                        style={[
+                          styles.weatherCard,
+                          { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                          index === 0 && {
+                            backgroundColor: theme.primary,
+                            borderColor: "transparent",
+                          },
+                          Shadows.small,
+                        ]}
+                      >
+                        <ThemedText
+                          style={[
+                            styles.weatherDay,
+                            { color: index === 0 ? "#FFFFFF" : theme.textSecondary },
+                          ]}
+                        >
+                          {getDayName(day.date)}
+                        </ThemedText>
+                        <Feather
+                          name={getWeatherIconName(day.condition)}
+                          size={24}
+                          color={index === 0 ? "#FFFFFF" : theme.text}
+                        />
+                        <View style={styles.weatherTemps}>
+                          <ThemedText
+                            style={[styles.weatherTempMax, index === 0 && { color: "#FFFFFF" }]}
+                          >
+                            {day.tempMax}°
+                          </ThemedText>
+                          <ThemedText
+                            style={[styles.weatherTempMin, index === 0 ? { color: "#FFFFFF90" } : { color: theme.textSecondary }]}
+                          >
+                            {day.tempMin}°
+                          </ThemedText>
+                        </View>
+                        {day.precipitation > 0 && (
+                          <View style={styles.rainRow}>
+                            <Feather
+                              name="droplet"
+                              size={10}
+                              color={index === 0 ? "#FFFFFF" : theme.accent}
+                            />
+                            <ThemedText
+                              style={[
+                                styles.rainText,
+                                {
+                                  color: index === 0 ? "#FFFFFF" : theme.accent,
+                                },
+                              ]}
+                            >
+                              {Math.round(day.precipitation)}mm
+                            </ThemedText>
+                          </View>
+                        )}
+                      </View>
+                    ))}
+                  </ScrollView>
+                </>
+              ) : (
+                <View style={[styles.weatherErrorCard, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }]}>
+                  <Feather name="cloud-off" size={20} color={theme.textSecondary} />
+                  <ThemedText style={[styles.weatherErrorText, { color: theme.textSecondary }]}>
+                    No weather data available
+                  </ThemedText>
+                </View>
+              )}
             </View>
 
             <View style={styles.section}>
@@ -831,6 +986,7 @@ export default function DashboardScreen() {
                 style={[
                   styles.summaryCard,
                   { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                  Shadows.small,
                 ]}
               >
                 {userFarms.slice(0, 3).map((field, index) => (
@@ -912,6 +1068,7 @@ export default function DashboardScreen() {
                 style={[
                   styles.activityCard,
                   { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                  Shadows.small,
                 ]}
               >
                 {alerts.slice(0, 2).map((alert, index) => (
@@ -1189,6 +1346,118 @@ const styles = StyleSheet.create({
   sectionTitle: {
     marginBottom: 0,
   },
+  weatherHeaderActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+  },
+  weatherUpdatedText: {
+    fontSize: 11,
+  },
+  refreshWeatherButton: {
+    padding: Spacing.xs,
+  },
+  weatherErrorCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    marginBottom: Spacing.md,
+  },
+  weatherErrorText: {
+    fontSize: 13,
+    flex: 1,
+  },
+  weatherRetryButton: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
+  },
+  weatherLoadingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.sm,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    marginBottom: Spacing.md,
+  },
+  weatherLoadingText: {
+    fontSize: 13,
+  },
+  currentWeatherCard: {
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    padding: Spacing.lg,
+    marginBottom: Spacing.lg,
+  },
+  currentWeatherMain: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: Spacing.md,
+  },
+  currentWeatherTemp: {
+    alignItems: "flex-start",
+  },
+  currentWeatherCondition: {
+    fontSize: 14,
+    marginTop: 4,
+  },
+  currentWeatherDetails: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: Spacing.md,
+  },
+  weatherDetailItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.xs,
+  },
+  weatherDetailText: {
+    fontSize: 12,
+  },
+  weatherScroll: {
+    gap: Spacing.md,
+    paddingBottom: Spacing.xs,
+  },
+  weatherCard: {
+    width: 80,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    alignItems: "center",
+    gap: Spacing.sm,
+  },
+  weatherDay: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  weatherTemps: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  weatherTempMax: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  weatherTempMin: {
+    fontSize: 12,
+    opacity: 0.8,
+  },
+  rainRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  rainText: {
+    fontSize: 10,
+  },
   kpiGrid: {
     flexDirection: "row",
     gap: Spacing.md,
@@ -1277,34 +1546,6 @@ const styles = StyleSheet.create({
   divider: {
     width: 1,
     marginHorizontal: Spacing.lg,
-  },
-  weatherScroll: {
-    gap: Spacing.md,
-  },
-  weatherCard: {
-    width: 72,
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    alignItems: "center",
-    gap: Spacing.sm,
-  },
-  weatherDay: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  weatherTemp: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  rainRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-  },
-  rainText: {
-    fontSize: 10,
   },
   summaryCard: {
     borderRadius: BorderRadius.lg,
